@@ -112,7 +112,7 @@ HAI_Deepfake/
 
 ```bash
 # GitHub 저장소 클론
-git clone https://github.com/your-username/HAI_Deepfake.git
+git clone https://github.com/CBottle/HAI_Deepfake.git
 cd HAI_Deepfake
 ```
 
@@ -163,7 +163,7 @@ python train.py --debug --epochs 1 --batch_size 2 --device cpu
 **Colab 노트북 첫 셀**:
 ```python
 # GitHub 저장소 클론
-!git clone https://github.com/your-username/HAI_Deepfake.git
+!git clone https://github.com/CBottle/HAI_Deepfake.git
 %cd HAI_Deepfake
 
 # 최신 코드 업데이트 (이미 클론한 경우)

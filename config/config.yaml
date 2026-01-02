@@ -1,0 +1,68 @@
+# HAI Deepfake Detection - Configuration File
+
+# 실험 설정
+experiment:
+  name: "vit-base-baseline"
+  seed: 42
+  output_dir: "./output"
+
+# 모델 설정
+model:
+  name: "google/vit-base-patch16-224"
+  # 또는 사전학습된 딥페이크 탐지 모델
+  # name: "prithivMLmods/Deep-Fake-Detector-v2-Model"
+  num_classes: 2
+  pretrained: true
+
+# 데이터 설정
+data:
+  train_dir: "./train_data"
+  val_dir: "./val_data"
+  test_dir: "./test_data"
+  num_frames: 10  # 비디오 샘플링 프레임 수
+  image_size: 224
+
+  # 데이터 증강
+  augmentation:
+    horizontal_flip: true
+    vertical_flip: false
+    rotation: 10
+    color_jitter: true
+
+# 학습 설정
+training:
+  epochs: 50
+  batch_size: 32
+  num_workers: 4
+  learning_rate: 1e-4
+  weight_decay: 1e-4
+  warmup_epochs: 5
+
+  # 학습 전략
+  mixed_precision: true  # AMP 사용
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+
+  # 체크포인트
+  save_frequency: 5  # N epoch마다 저장
+  keep_last_checkpoints: 5  # 최근 N개 유지
+
+# 검증 설정
+validation:
+  batch_size: 64
+  frequency: 1  # N epoch마다 검증
+
+# 추론 설정
+inference:
+  batch_size: 64
+  num_workers: 4
+  output_file: "submission.csv"
+
+# 실험 추적 (wandb)
+wandb:
+  enabled: false
+  project: "hai-deepfake"
+  entity: null  # wandb username
+
+# 디바이스 설정
+device: "cuda"  # cuda 또는 cpu
