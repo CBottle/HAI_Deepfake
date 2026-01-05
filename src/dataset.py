@@ -41,34 +41,44 @@ class DeepfakeDataset(Dataset):
         self.num_frames = num_frames
         self.transform = transform
 
-        # 파일 목록 수집
-        self.files = self._collect_files()
+        # 클래스 매핑 (real: 0, fake: 1)
+        self.class_to_idx = {"real": 0, "fake": 1}
+        
+        # 파일 목록과 레이블 수집
+        self.samples = self._collect_samples()
 
-    def _collect_files(self) -> List[Path]:
-        """데이터 디렉토리에서 파일 목록 수집"""
-        files = []
-        for ext in self.IMAGE_EXTS | self.VIDEO_EXTS:
-            files.extend(self.data_dir.glob(f"*{ext}"))
-        return sorted(files)
+    def _collect_samples(self) -> List[Tuple[Path, int]]:
+        """데이터 디렉토리에서 (파일 경로, 레이블) 쌍 수집"""
+        samples = []
+        for class_name, label in self.class_to_idx.items():
+            class_dir = self.data_dir / class_name
+            if not class_dir.exists():
+                continue
+                
+            for ext in self.IMAGE_EXTS | self.VIDEO_EXTS:
+                for file_path in class_dir.glob(f"*{ext}"):
+                    samples.append((file_path, label))
+                    
+        return sorted(samples, key=lambda x: x[0])
 
     def __len__(self) -> int:
-        return len(self.files)
+        return len(self.samples)
 
     def __getitem__(self, idx: int) -> dict:
         """
         데이터셋에서 샘플 가져오기
 
         Returns:
-            dict: {'pixel_values': Tensor, 'filename': str}
+            dict: {'pixel_values': Tensor, 'labels': int, 'filename': str}
         """
-        file_path = self.files[idx]
+        file_path, label = self.samples[idx]
 
         # 프레임 추출
         frames = self._read_frames(file_path)
 
         # 이미지 전처리
         if frames:
-            # 첫 프레임만 사용 (또는 평균 사용 가능)
+            # 첫 프레임만 사용 (단일 이미지 모델이므로)
             image = Image.fromarray(frames[0])
 
             if self.transform:
@@ -78,11 +88,12 @@ class DeepfakeDataset(Dataset):
             inputs = self.processor(images=image, return_tensors="pt")
             pixel_values = inputs['pixel_values'].squeeze(0)
         else:
-            # 빈 이미지 (에러 처리)
+            # 에러 시 빈 이미지 처리
             pixel_values = torch.zeros(3, 224, 224)
 
         return {
             'pixel_values': pixel_values,
+            'labels': label,
             'filename': file_path.name
         }
 

@@ -49,7 +49,8 @@ def infer_batch(model, pixel_values, device):
     """
     with torch.no_grad():
         pixel_values = pixel_values.to(device)
-        logits = model(pixel_values=pixel_values).logits
+        # DeepfakeDetector.forward()는 이미 logits를 반환합니다.
+        logits = model(pixel_values)
         probs = F.softmax(logits, dim=1)[:, 1]  # Fake 확률
         return probs.cpu().tolist()
 

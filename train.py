@@ -141,13 +141,8 @@ def main():
     device = get_device() if not args.debug else 'cpu'
     print(f"Device: {device}")
 
-    # 데이터셋 준비 (실제 구현 시 레이블이 있는 데이터셋 필요)
-    # TODO: 실제 학습 데이터로 교체
-    print("Note: 현재는 추론만 가능한 baseline입니다.")
-    print("학습을 위해서는 레이블이 있는 데이터셋이 필요합니다.")
-    print("데이터셋 준비 후 dataset.py의 DeepfakeDataset을 사용하세요.")
-
     # 모델 초기화
+    print(f"Initializing model: {config['model']['name']}")
     processor = ViTImageProcessor.from_pretrained(config['model']['name'])
     model = DeepfakeDetector(
         model_name=config['model']['name'],
@@ -155,16 +150,46 @@ def main():
         pretrained=config['model']['pretrained']
     ).to(device)
 
+    # 데이터셋 준비
+    train_dir = config['data']['train_dir']
+    print(f"Loading training data from: {train_dir}")
+    
+    # 디버그 모드일 때 설정 조정
+    if args.debug:
+        config['training']['epochs'] = 2  # 빠르게 2에포크만
+        config['training']['batch_size'] = 2
+        print("Debug mode enabled: epochs=2, batch_size=2")
+
+    train_dataset = DeepfakeDataset(
+        data_dir=train_dir,
+        processor=processor,
+        num_frames=config['data']['num_frames']
+    )
+    
+    # 데이터가 없으면 경고
+    if len(train_dataset) == 0:
+        print("Error: No training data found! Please run 'create_dummy_data.py' first.")
+        return
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=config['training']['batch_size'],
+        shuffle=True,
+        num_workers=0 if args.debug else config['training']['num_workers']
+    )
+    
+    print(f"Training samples: {len(train_dataset)}")
+
     # 손실 함수 및 옵티마이저
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(
         model.parameters(),
-        lr=config['training']['learning_rate'],
-        weight_decay=config['training']['weight_decay']
+        lr=float(config['training']['learning_rate']),
+        weight_decay=float(config['training']['weight_decay'])
     )
 
     # Mixed Precision
-    scaler = torch.cuda.amp.GradScaler() if config['training']['mixed_precision'] else None
+    scaler = torch.cuda.amp.GradScaler() if config['training']['mixed_precision'] and device == 'cuda' else None
 
     # 체크포인트에서 재개
     start_epoch = 0
@@ -175,40 +200,28 @@ def main():
         start_epoch = checkpoint['epoch'] + 1
         best_auc = checkpoint.get('val_auc', 0.0)
 
-    # 학습 루프 예시
-    # TODO: 실제 학습 데이터로 교체 필요
-    print("\n=== Training Example (Placeholder) ===")
-    print("실제 학습을 위해서는:")
-    print("1. 학습 데이터 준비 (train_data/, val_data/)")
-    print("2. 레이블 정보 추가")
-    print("3. DataLoader 구성")
-    print("4. train_epoch 및 validate 함수 실행")
+    # 학습 루프
+    print("\n=== Start Training ===")
+    
+    for epoch in range(start_epoch, config['training']['epochs']):
+        print(f"\n=== Epoch {epoch + 1}/{config['training']['epochs']} ===")
 
-    # 예시 코드 (실제 사용 시 주석 해제)
-    # for epoch in range(start_epoch, config['training']['epochs']):
-    #     print(f"\n=== Epoch {epoch + 1}/{config['training']['epochs']} ===")
-    #
-    #     # 학습
-    #     train_loss = train_epoch(model, train_loader, criterion, optimizer, device, scaler)
-    #     print(f"Train Loss: {train_loss:.4f}")
-    #
-    #     # 검증
-    #     if (epoch + 1) % config['validation']['frequency'] == 0:
-    #         val_loss, val_auc = validate(model, val_loader, criterion, device)
-    #         print(f"Val Loss: {val_loss:.4f}, Val AUC: {val_auc:.4f}")
-    #
-    #         # 체크포인트 저장
-    #         is_best = val_auc > best_auc
-    #         if is_best:
-    #             best_auc = val_auc
-    #
-    #         save_checkpoint(
-    #             model, optimizer, epoch, val_auc,
-    #             checkpoint_dir='checkpoints',
-    #             is_best=is_best
-    #         )
+        # 학습
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, device, scaler)
+        print(f"Train Loss: {train_loss:.4f}")
 
-    print("\n학습 스크립트 구조 확인 완료!")
+        # 검증 (현재는 검증 데이터셋이 없으므로 생략하거나 train 데이터로 대체 가능)
+        # 실제로는 val_loader가 필요함
+        # val_loss, val_auc = validate(model, val_loader, criterion, device)
+        
+        # 임시 체크포인트 저장 (매 에포크마다)
+        save_checkpoint(
+            model, optimizer, epoch, val_auc=0.0,
+            checkpoint_dir=config['experiment'].get('output_dir', 'checkpoints'),
+            is_best=False
+        )
+
+    print("\nTraining completed successfully!")
 
 
 if __name__ == '__main__':
