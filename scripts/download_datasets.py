@@ -203,20 +203,20 @@ class KaggleDownloader:
 
 # 추천 데이터셋 목록
 RECOMMENDED_DATASETS = {
-    "소규모 (테스트용)": [
+    "소규모 (테스트용) - 추천!": [
         {
-            "name": "sorokin/faceforensics",
-            "output": "faceforensics",
-            "size": "~10GB",
-            "description": "FaceForensics++ - 가장 인기있는 딥페이크 데이터셋",
+            "name": "manjilkarki/deepfake-and-real-images",
+            "output": "deepfake-real-images",
+            "size": "~1GB",
+            "description": "Deepfake and Real Images - 이미지 형태 (프레임 추출 불필요!)",
         }
     ],
     "중규모": [
         {
-            "name": "sorokin/faceforensics",
-            "output": "faceforensics",
-            "size": "~10GB",
-            "description": "FaceForensics++",
+            "name": "manjilkarki/deepfake-and-real-images",
+            "output": "deepfake-real-images",
+            "size": "~1GB",
+            "description": "Deepfake and Real Images",
         },
         {
             "name": "jessicali9530/celeba-dataset",
@@ -284,8 +284,10 @@ def main():
     print("=" * 70)
     print("💡 사용 예시:")
     print("-" * 70)
-    print("# 소규모로 시작 (추천)")
-    print('downloader.download_dataset("sorokin/faceforensics", "faceforensics")')
+    print("# 소규모로 시작 (추천!) - 이미지 형태라 프레임 추출 불필요")
+    print(
+        'downloader.download_dataset("manjilkarki/deepfake-and-real-images", "deepfake-real-images")'
+    )
     print()
     print("# CelebA 추가 (Real 이미지)")
     print('downloader.download_dataset("jessicali9530/celeba-dataset", "celeba")')

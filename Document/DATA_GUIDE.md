@@ -66,20 +66,21 @@ Google Drive/
 
 ## 📦 추천 데이터셋
 
-### 🥇 소규모 (테스트용)
+### 🥇 소규모 (테스트용) - 추천!
 
 | 데이터셋 | 크기 | 설명 | Kaggle 링크 |
 |---------|------|------|-------------|
-| **FaceForensics++** | ~10GB | 가장 인기있는 딥페이크 벤치마크 | `sorokin/faceforensics` |
+| **Deepfake and Real Images** | ~1GB | 이미지 형태, 프레임 추출 불필요! | `manjilkarki/deepfake-and-real-images` |
+
+**장점:**
+- 이미지 형태라 바로 사용 가능 (비디오 변환 불필요)
+- 용량이 작아 빠른 다운로드
+- Real/Fake 폴더로 구분되어 있음
 
 **사용 시나리오:**
 - 처음 시작할 때
 - 모델 아키텍처 실험
 - 빠른 프로토타이핑
-
-**예상 데이터량:**
-- Real: ~10,000 프레임
-- Fake: ~40,000 프레임
 
 ---
 
@@ -87,17 +88,13 @@ Google Drive/
 
 | 데이터셋 | 크기 | 설명 | Kaggle 링크 |
 |---------|------|------|-------------|
-| **FaceForensics++** | ~10GB | Fake 비디오 | `sorokin/faceforensics` |
+| **Deepfake and Real Images** | ~1GB | 기본 데이터셋 | `manjilkarki/deepfake-and-real-images` |
 | **CelebA** | ~1.5GB | Real 얼굴 이미지 200K | `jessicali9530/celeba-dataset` |
 
 **사용 시나리오:**
 - 중간 단계 학습
 - Real/Fake 밸런스 조정
 - 성능 개선 실험
-
-**예상 데이터량:**
-- Real: ~200,000 이미지
-- Fake: ~40,000 프레임
 
 ---
 
@@ -124,13 +121,9 @@ MyDrive/
 └── HAI_Deepfake/
     ├── kaggle.json                 # Kaggle API 토큰
     ├── datasets/                   # Kaggle 원본 데이터
-    │   ├── faceforensics/
-    │   │   ├── real/               # Real 비디오
-    │   │   └── fake/               # Fake 비디오
-    │   └── celeba/
-    │       └── img_align_celeba/   # CelebA 이미지
-    ├── train_data/                 # 전처리된 학습 데이터
-    │   ├── real/                   # Real 이미지 (프레임 추출 후)
+    │   └── deepfake-real-images/   # 다운로드된 데이터셋
+    ├── train_data/                 # 학습 데이터 (정리 후)
+    │   ├── real/                   # Real 이미지
     │   └── fake/                   # Fake 이미지
     ├── train_data_small/           # 소규모 테스트 데이터
     │   ├── real/                   # Real 1,000장
@@ -150,63 +143,43 @@ MyDrive/
 
 #### Colab에서 실행:
 ```python
-# 스크립트 실행
-%run scripts/download_datasets.py
+# 데이터셋 다운로드
+!kaggle datasets download -d manjilkarki/deepfake-and-real-images \
+    -p /content/drive/MyDrive/HAI_Deepfake/datasets/deepfake-real-images \
+    --unzip
 
-# FaceForensics++ 다운로드
-downloader.download_dataset(
-    dataset_name="sorokin/faceforensics",
-    output_name="faceforensics"
-)
-
-# CelebA 추가
-downloader.download_dataset(
-    dataset_name="jessicali9530/celeba-dataset",
-    output_name="celeba"
-)
-
-# 현재 상태 확인
-info = downloader.get_dataset_info()
+# CelebA 추가 (선택)
+!kaggle datasets download -d jessicali9530/celeba-dataset \
+    -p /content/drive/MyDrive/HAI_Deepfake/datasets/celeba \
+    --unzip
 ```
 
 #### 터미널에서 실행 (고급):
 ```bash
 # Colab 터미널 또는 로컬
-kaggle datasets download -d sorokin/faceforensics -p /path/to/output --unzip
+kaggle datasets download -d manjilkarki/deepfake-and-real-images -p /path/to/output --unzip
 ```
 
 ---
 
-### 2. 비디오 → 이미지 변환
+### 2. 데이터 폴더 구조 정리
 
-#### Colab에서 실행:
+**Deepfake and Real Images** 데이터셋은 이미지 형태이므로 **프레임 추출이 불필요**합니다!
+
+다운로드 후 `real/`, `fake/` 폴더 구조로 정리하세요:
+
 ```python
-# 프레임 추출
-!python scripts/extract_frames.py \
-    --input "/content/drive/MyDrive/HAI_Deepfake/datasets/faceforensics" \
-    --output "/content/drive/MyDrive/HAI_Deepfake/train_data" \
-    --max-frames 30 \
-    --sample-method uniform \
-    --quality 95
-```
+# 학습 데이터 폴더 생성
+from pathlib import Path
 
-#### 로컬에서 실행:
-```bash
-python scripts/extract_frames.py \
-    --input datasets/faceforensics \
-    --output train_data \
-    --max-frames 30 \
-    --sample-method uniform
-```
+TRAIN_DATA_DIR = Path("/content/drive/MyDrive/HAI_Deepfake/train_data")
+(TRAIN_DATA_DIR / "real").mkdir(parents=True, exist_ok=True)
+(TRAIN_DATA_DIR / "fake").mkdir(parents=True, exist_ok=True)
 
-#### 파라미터 설명:
-- `--max-frames`: 비디오당 추출할 프레임 수 (기본: 30)
-- `--sample-method`: 샘플링 방법
-  - `uniform`: 균등 간격 (추천)
-  - `random`: 랜덤
-  - `first`: 처음 N개
-- `--quality`: JPEG 품질 (0-100, 기본: 95)
-- `--max-videos`: 테스트용 (예: 10개만 처리)
+# 데이터셋 구조에 맞게 복사 (예시)
+# !cp -r datasets/deepfake-real-images/Real/* train_data/real/
+# !cp -r datasets/deepfake-real-images/Fake/* train_data/fake/
+```
 
 ---
 
@@ -283,12 +256,12 @@ show_samples("/content/drive/MyDrive/HAI_Deepfake/train_data_small")
 ### 3. 다운로드 시간
 | 데이터셋 | 크기 | 예상 시간 |
 |---------|------|-----------|
-| FaceForensics++ | 10GB | 10~30분 |
+| Deepfake and Real Images | ~1GB | 5~10분 |
 | CelebA | 1.5GB | 5~10분 |
 | DFDC (전체) | 470GB | 3~6시간 |
 
 ### 4. 데이터 라이센스
-- **FaceForensics++**: 연구/비상업 목적만
+- **Deepfake and Real Images**: Kaggle 이용 약관 준수
 - **CelebA**: 비상업 목적만
 - **DFDC**: CC BY-NC-SA 4.0
 
