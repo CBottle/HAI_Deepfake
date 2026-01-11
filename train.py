@@ -154,10 +154,18 @@ def main():
     ).to(device)
 
     # 처음에는 ViT의 몸통(Backbone)은 얼리고 분류기(Head)만 학습하자
-    for param in model.model.parameters():
+    for param in model.parameters():
         param.requires_grad = False
-    print("ViT Backbone frozen. Training only the classifier head...")
 
+    # 2. 마지막 분류기(classifier)만 다시 녹여서 공부하게 만들어
+    # 모델 내부에 'classifier'라는 이름이 들어간 레이어만 찾아서requires_grad를 True로 바꿔줘
+    for name, param in model.named_parameters():
+        if "classifier" in name:
+            param.requires_grad = True
+            print(f"Layer {name} is unfrozen and ready to learn!")
+
+    print("ViT Backbone is frozen. Only the classifier will be trained for the first 3 epochs.")
+        
     # 데이터셋 준비
     train_dir = config['data']['train_dir']
     val_dir = config['data'].get('val_dir', None)
