@@ -13,6 +13,7 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from transformers import ViTImageProcessor
+import random
 
 
 class DeepfakeDataset(Dataset):
@@ -83,8 +84,8 @@ class DeepfakeDataset(Dataset):
 
         # 이미지 전처리
         if frames:
-            # 첫 프레임만 사용 (단일 이미지 모델이므로)
-            image = Image.fromarray(frames[0])
+            chosen_frame = random.choice(frames) 
+            image = Image.fromarray(chosen_frame)
 
             if self.transform:
                 image = self.transform(image)

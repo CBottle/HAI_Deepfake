@@ -205,7 +205,8 @@ def main():
         print("Warning: Validation skipped (no validation data found)")
 
     # 손실 함수 및 옵티마이저
-    criterion = nn.CrossEntropyLoss()
+    class_weights = torch.tensor([1.0, 3.0]).to(device)
+    criterion = torch.nn.CrossEntropyLoss(weight=weights)
     optimizer = optim.AdamW(
         model.parameters(),
         lr=float(config['training']['learning_rate']),
