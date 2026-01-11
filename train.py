@@ -5,6 +5,8 @@ HAI Deepfake Detection - Training Script
 """
 
 import argparse
+import os
+import shutil
 from pathlib import Path
 
 import torch
@@ -131,6 +133,9 @@ def main():
     """메인 학습 루프"""
     args = parse_args()
 
+    from google.colab import drive
+    drive.mount('/content/drive')
+
     # 설정 로드
     config = load_config(args.config)
 
@@ -152,6 +157,7 @@ def main():
 
     # 데이터셋 준비
     train_dir = config['data']['train_dir']
+    val_dir = config['data'].get('val_dir', None)
     print(f"Loading training data from: {train_dir}")
     
     # 디버그 모드일 때 설정 조정
@@ -179,6 +185,27 @@ def main():
     )
     
     print(f"Training samples: {len(train_dataset)}")
+
+    # 검증 데이터 로더 설정
+    val_loader = None
+    if val_dir and os.path.exists(val_dir):
+        print(f"Loading validation data from: {val_dir}")
+        val_dataset = DeepfakeDataset(
+            data_dir=val_dir,
+            processor=processor,
+            num_frames=config['data']['num_frames']
+        )
+        if len(val_dataset) > 0:
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size=config['validation']['batch_size'],
+                shuffle=False,
+                num_workers=config['validation'].get('num_workers', 2)
+            )
+            print(f"Validation samples: {len(val_dataset)}")
+    
+    if not val_loader:
+        print("Warning: Validation skipped (no validation data found)")
 
     # 손실 함수 및 옵티마이저
     criterion = nn.CrossEntropyLoss()
@@ -210,16 +237,45 @@ def main():
         train_loss = train_epoch(model, train_loader, criterion, optimizer, device, scaler)
         print(f"Train Loss: {train_loss:.4f}")
 
-        # 검증 (현재는 검증 데이터셋이 없으므로 생략하거나 train 데이터로 대체 가능)
-        # 실제로는 val_loader가 필요함
-        # val_loss, val_auc = validate(model, val_loader, criterion, device)
+        # 검증
+        val_loss, val_auc = 0.0, 0.0
+        if val_loader:
+            val_loss, val_auc = validate(model, val_loader, criterion, device)
+            print(f"Validation - Loss: {val_loss:.4f}, AUC: {val_auc:.4f}")
         
-        # 임시 체크포인트 저장 (매 에포크마다)
+        # 체크포인트 저장
+        is_best = val_auc > best_auc
+        if is_best:
+            best_auc = val_auc
+
+        ckpt_dir = config['experiment'].get('output_dir', 'checkpoints')
         save_checkpoint(
-            model, optimizer, epoch, val_auc=0.0,
-            checkpoint_dir=config['experiment'].get('output_dir', 'checkpoints'),
-            is_best=False
+            model, optimizer, epoch, val_auc=val_auc,
+            checkpoint_dir=ckpt_dir,
+            is_best=is_best
         )
+
+        # Google Drive 백업 (Colab 환경인 경우)
+        drive_ckpt_dir = '/content/drive/MyDrive/HAI_Deepfake/checkpoints'
+        if os.path.exists('/content/drive'):
+            try:
+                os.makedirs(drive_ckpt_dir, exist_ok=True)
+                
+                # 현재 에포크 체크포인트 복사
+                ckpt_filename = f'checkpoint_epoch_{epoch:03d}.pt'
+                src_ckpt = os.path.join(ckpt_dir, ckpt_filename)
+                if os.path.exists(src_ckpt):
+                    shutil.copy2(src_ckpt, os.path.join(drive_ckpt_dir, ckpt_filename))
+                    print(f"Backed up checkpoint to Drive: {ckpt_filename}")
+                
+                # 최고 성능 모델 복사
+                if is_best:
+                    src_best = os.path.join(ckpt_dir, 'best_model.pt')
+                    if os.path.exists(src_best):
+                        shutil.copy2(src_best, os.path.join(drive_ckpt_dir, 'best_model.pt'))
+                        print("Backed up best_model.pt to Drive")
+            except Exception as e:
+                print(f"Warning: Failed to backup to Google Drive: {e}")
 
     print("\nTraining completed successfully!")
 
