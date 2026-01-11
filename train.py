@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 from transformers import ViTImageProcessor
 from tqdm import tqdm
 from sklearn.metrics import roc_auc_score
+from torchvision import transforms
 
 from src.models import DeepfakeDetector
 from src.dataset import DeepfakeDataset
@@ -153,7 +154,7 @@ def main():
     ).to(device)
 
     # 처음에는 ViT의 몸통(Backbone)은 얼리고 분류기(Head)만 학습하자
-    for param in model.vit.parameters():
+    for param in model.model.parameters():
         param.requires_grad = False
     print("ViT Backbone frozen. Training only the classifier head...")
 
@@ -168,10 +169,18 @@ def main():
         config['training']['batch_size'] = 2
         print("Debug mode enabled: epochs=2, batch_size=2")
 
+    train_transform = transforms.Compose([
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomRotation(degrees=15),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+        transforms.RandomApply([transforms.GaussianBlur(kernel_size=(3, 3))], p=0.3),
+    ])    
+
     train_dataset = DeepfakeDataset(
         data_dir=train_dir,
         processor=processor,
-        num_frames=config['data']['num_frames']
+        num_frames=config['data']['num_frames'],
+        transform=train_transform
     )
     
     # 데이터가 없으면 경고
@@ -236,7 +245,7 @@ def main():
 
         # 예: 3에포크 이후부터는 몸통도 같이 학습 (Fine-tuning)
         if epoch == 3:
-            for param in model.vit.parameters():
+            for param in model.model.parameters():
                 param.requires_grad = True
             print("ViT Backbone unfrozen. Fine-tuning the whole model...")
 
