@@ -41,8 +41,8 @@ class DeepfakeDataset(Dataset):
         self.num_frames = num_frames
         self.transform = transform
 
-        # 클래스 매핑 (real: 0, fake: 1)
-        self.class_to_idx = {"real": 0, "fake": 1}
+        # 클래스 매핑 (Real: 0, Fake: 1)
+        self.class_to_idx = {"Real": 0, "Fake": 1}
         
         # 파일 목록과 레이블 수집
         self.samples = self._collect_samples()
@@ -52,6 +52,11 @@ class DeepfakeDataset(Dataset):
         samples = []
         for class_name, label in self.class_to_idx.items():
             class_dir = self.data_dir / class_name
+            
+            # 대문자 폴더가 없으면 소문자 폴더 확인
+            if not class_dir.exists():
+                class_dir = self.data_dir / class_name.lower()
+            
             if not class_dir.exists():
                 continue
                 
