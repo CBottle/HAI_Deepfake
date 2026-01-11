@@ -16,9 +16,9 @@ model:
 
 # 데이터 설정
 data:
-  train_dir: "./train_data"
-  val_dir: "./val_data"
-  test_dir: "./test_data"
+  train_dir: "./train_data/Train"
+  val_dir: "./train_data/Validation"
+  test_dir: "./train_data/Test"
   num_frames: 10  # 비디오 샘플링 프레임 수
   image_size: 224
 
