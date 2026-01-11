@@ -133,9 +133,6 @@ def main():
     """메인 학습 루프"""
     args = parse_args()
 
-    from google.colab import drive
-    drive.mount('/content/drive')
-
     # 설정 로드
     config = load_config(args.config)
 
