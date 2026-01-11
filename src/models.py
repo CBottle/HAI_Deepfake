@@ -65,7 +65,7 @@ def load_model(checkpoint_path: str, device: str = "cuda") -> DeepfakeDetector:
     Returns:
         로드된 모델
     """
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     # 모델 초기화
     model = DeepfakeDetector()
