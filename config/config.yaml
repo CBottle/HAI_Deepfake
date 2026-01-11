@@ -44,7 +44,7 @@ training:
   max_grad_norm: 1.0
 
   # 체크포인트
-  save_frequency: 5  # N epoch마다 저장
+  save_frequency: 1  # N epoch마다 저장
   keep_last_checkpoints: 5  # 최근 N개 유지
   experiment:
     output_dir: '/content/drive/MyDrive/HAI_Deepfake/checkpoints' # 네 드라이브 경로로!
