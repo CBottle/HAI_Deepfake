@@ -152,6 +152,11 @@ def main():
         pretrained=config['model']['pretrained']
     ).to(device)
 
+    # 처음에는 ViT의 몸통(Backbone)은 얼리고 분류기(Head)만 학습하자
+    for param in model.vit.parameters():
+        param.requires_grad = False
+    print("ViT Backbone frozen. Training only the classifier head...")
+
     # 데이터셋 준비
     train_dir = config['data']['train_dir']
     val_dir = config['data'].get('val_dir', None)
@@ -206,12 +211,10 @@ def main():
 
     # 손실 함수 및 옵티마이저
     class_weights = torch.tensor([1.0, 3.0]).to(device)
-    criterion = torch.nn.CrossEntropyLoss(weight=weights)
-    optimizer = optim.AdamW(
-        model.parameters(),
-        lr=float(config['training']['learning_rate']),
-        weight_decay=float(config['training']['weight_decay'])
-    )
+    criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
+
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
 
     # Mixed Precision
     scaler = torch.cuda.amp.GradScaler() if config['training']['mixed_precision'] and device == 'cuda' else None
@@ -230,6 +233,12 @@ def main():
     
     for epoch in range(start_epoch, config['training']['epochs']):
         print(f"\n=== Epoch {epoch + 1}/{config['training']['epochs']} ===")
+
+        # 예: 3에포크 이후부터는 몸통도 같이 학습 (Fine-tuning)
+        if epoch == 3:
+            for param in model.vit.parameters():
+                param.requires_grad = True
+            print("ViT Backbone unfrozen. Fine-tuning the whole model...")
 
         # 학습
         train_loss = train_epoch(model, train_loader, criterion, optimizer, device, scaler)
@@ -252,6 +261,10 @@ def main():
             checkpoint_dir=ckpt_dir,
             is_best=is_best
         )
+
+        # 에포크 마지막에 스케줄러 업데이트
+        scheduler.step()
+        print(f"Current LR: {scheduler.get_last_lr()[0]}")
 
         # Google Drive 백업 (Colab 환경인 경우)
         drive_ckpt_dir = '/content/drive/MyDrive/HAI_Deepfake/checkpoints'
