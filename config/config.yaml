@@ -16,9 +16,9 @@ model:
 
 # 데이터 설정
 data:
-  train_dir: "./train_data/Train"
-  val_dir: "./train_data/Validation"
-  test_dir: "./train_data/Test"
+  train_dir: "./train_data/Train/"
+  val_dir: "./train_data/Validation/"
+  test_dir: "./train_data/Test/"
   num_frames: 10  # 비디오 샘플링 프레임 수
   image_size: 224
 
@@ -46,6 +46,8 @@ training:
   # 체크포인트
   save_frequency: 5  # N epoch마다 저장
   keep_last_checkpoints: 5  # 최근 N개 유지
+  experiment:
+    output_dir: '/content/drive/MyDrive/HAI_Deepfake/checkpoints' # 네 드라이브 경로로!
 
 # 검증 설정
 validation:
