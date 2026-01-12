@@ -129,8 +129,8 @@ class VideoFrameExtractor:
 
     def process_dataset(
         self,
-        input_dir: Path,
-        output_dir: Path,
+        input_dir: Path(r"D:\deepfake_Data\train"),
+        output_dir: Path(r"D:\deepfake_Data\extracted_frames"),
         max_videos: Optional[int] = None,
         num_workers: int = 4,
     ):

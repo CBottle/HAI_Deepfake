@@ -60,6 +60,7 @@ train_data/
 test_data/
 TestData/
 TestData.zip
+extracted_frames/
 
 # 모델 가중치 (큰 파일)
 *.pt

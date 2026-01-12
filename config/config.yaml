@@ -31,7 +31,7 @@ data:
 
 # 학습 설정
 training:
-  epochs: 50
+  epochs: 15
   batch_size: 32
   num_workers: 4
   learning_rate: 1e-4
