@@ -23,18 +23,20 @@ data:
   image_size: 224
 
   # 데이터 증강
-  augmentation:
-    horizontal_flip: true
-    vertical_flip: false
-    rotation: 10
-    color_jitter: true
+augmentation:
+  horizontal_flip: true
+  vertical_flip: false
+  rotation: 15
+  color_jitter: true
+  compression: true
+  blur: true
 
 # 학습 설정
 training:
   epochs: 15
   batch_size: 32
   num_workers: 4
-  learning_rate: 1e-4
+  learning_rate: 5e-5
   weight_decay: 1e-4
   warmup_epochs: 5
 

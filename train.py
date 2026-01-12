@@ -17,6 +17,9 @@ from transformers import ViTImageProcessor
 from tqdm import tqdm
 from sklearn.metrics import roc_auc_score
 from torchvision import transforms
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+import numpy as np
 
 from src.models import DeepfakeDetector
 from src.dataset import DeepfakeDataset
@@ -165,7 +168,7 @@ def main():
             print(f"Layer {name} is unfrozen and ready to learn!")
 
     print("ViT Backbone is frozen. Only the classifier will be trained for the first 3 epochs.")
-        
+
     # 데이터셋 준비
     train_dir = config['data']['train_dir']
     val_dir = config['data'].get('val_dir', None)
@@ -177,11 +180,15 @@ def main():
         config['training']['batch_size'] = 2
         print("Debug mode enabled: epochs=2, batch_size=2")
 
-    train_transform = transforms.Compose([
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomRotation(degrees=15),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-        transforms.RandomApply([transforms.GaussianBlur(kernel_size=(3, 3))], p=0.3),
+    train_transform = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.Rotate(limit=15, p=0.5),
+        A.RandomBrightnessContrast(brightness_limit=0.2, contrast=0.2, p=0.5),
+        
+        # 딥페이크 기강 잡는 매운맛 3대장 추가
+        A.ImageCompression(quality_lower=60, quality_upper=100, p=0.5), # 압축 노이즈
+        A.GaussianBlur(blur_limit=(3, 7), p=0.3),                       # 흐림 효과
+        A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),                   # 노이즈
     ])    
 
     train_dataset = DeepfakeDataset(
@@ -229,7 +236,11 @@ def main():
     # 손실 함수 및 옵티마이저
     class_weights = torch.tensor([1.0, 3.0]).to(device)
     criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
+    optimizer = optim.AdamW(
+    model.parameters(), 
+    lr=1e-4,
+    weight_decay=0.05  # 규제를 빡세게!
+    )   
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
 

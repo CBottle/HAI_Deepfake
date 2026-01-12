@@ -84,15 +84,38 @@ class DeepfakeDataset(Dataset):
 
         # 이미지 전처리
         if frames:
-            chosen_frame = random.choice(frames) 
-            image = Image.fromarray(chosen_frame)
-
+            chosen_frame = random.choice(frames) # chosen_frame은 현재 numpy array 상태
+            
+            # 1. 증강 적용 단계
             if self.transform:
-                image = self.transform(image)
+                # Albumentations인 경우
+                if hasattr(self.transform, "is_albumentations") or "albumentations" in str(type(self.transform)).lower():
+                    augmented = self.transform(image=chosen_frame)
+                    image_np = augmented['image']
+                    
+                    # Tensor(ToTensorV2) 처리
+                    if torch.is_tensor(image_np):
+                        image_np = image_np.permute(1, 2, 0).cpu().numpy()
+                    
+                    # Float(Normalize) 처리: 0~1 사이면 255 곱해주기
+                    if image_np.dtype == np.float32 or image_np.dtype == np.float64:
+                        image_np = (image_np * 255).astype(np.uint8)
+                    
+                    image = Image.fromarray(image_np)
+                
+                # Torchvision인 경우
+                else:
+                    image_pil = Image.fromarray(chosen_frame)
+                    image = self.transform(image_pil)
+            else:
+                # 증강 안 쓸 때
+                image = Image.fromarray(chosen_frame)
 
-            # Processor를 통한 전처리
+            # 2. Processor를 통한 전처리 (최종)
+            # image는 여기서 무조건 PIL Image 형태여야 함!
             inputs = self.processor(images=image, return_tensors="pt")
             pixel_values = inputs['pixel_values'].squeeze(0)
+            
         else:
             # 에러 시 빈 이미지 처리
             pixel_values = torch.zeros(3, 224, 224)
