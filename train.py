@@ -180,23 +180,36 @@ def main():
         config['training']['batch_size'] = 2
         print("Debug mode enabled: epochs=2, batch_size=2")
 
-    train_transform = A.Compose([
+    hard_transform = A.Compose([
+        # 1. 기하학적 변형 (얼굴 각도와 구도를 계속 바꿈)
         A.HorizontalFlip(p=0.5),
-        A.Rotate(limit=15, p=0.5),
-        A.RandomBrightnessContrast(brightness_limit=0.2, contrast=0.2, p=0.5),
-        
-        # 딥페이크 기강 잡는 매운맛 3대장 추가
-        A.ImageCompression(quality_lower=60, quality_upper=100, p=0.5), # 압축 노이즈
-        A.GaussianBlur(blur_limit=(3, 7), p=0.3),                       # 흐림 효과
-        A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),                   # 노이즈
-    ])    
+        A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.2, rotate_limit=30, p=0.7),
+    
+        # 2. 강한 노이즈 & 화질 저하 (딥페이크는 압축 노이즈에 약해!)
+        A.OneOf([
+            A.ImageCompression(quality_lower=30, quality_upper=70, p=0.5), # 화질 확 깨기
+            A.GaussNoise(var_limit=(20.0, 100.0), p=0.5), # 지지직거리는 노이즈
+            A.ISONoise(p=0.5),
+        ], p=0.6),
 
-    train_dataset = DeepfakeDataset(
-        data_dir=train_dir,
-        processor=processor,
-        num_frames=config['data']['num_frames'],
-        transform=train_transform
-    )
+        # 3. 색감 & 조명 테러 (피부 톤이나 조명에 의존하지 못하게)
+        A.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1, p=0.5),
+        A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.5),
+    
+        # 4. 필살기: CoarseDropout (Cutout)
+        # 얼굴의 일부분을 검은 사각형으로 가려버려. 
+        # 눈 하나가 없어도 다른 부분(입가, 턱선)의 조작 흔적을 찾게 만드는 훈련이야!
+        A.CoarseDropout(
+            max_holes=8, 
+            max_height=32, 
+            max_width=32, 
+            min_holes=2, 
+            p=0.5
+        ),
+    
+    # 5. 공간적 왜곡
+    A.GridDistortion(p=0.3), 
+    ])
     
     # 데이터가 없으면 경고
     if len(train_dataset) == 0:
@@ -236,11 +249,12 @@ def main():
     # 손실 함수 및 옵티마이저
     class_weights = torch.tensor([1.0, 3.0]).to(device)
     criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = optim.AdamW(
-    model.parameters(), 
-    lr=1e-4,
-    weight_decay=0.05  # 규제를 빡세게!
-    )   
+    optimizer = torch.optim.AdamW([
+    # ViT 백본: 아주 조심스럽게 (기존 LR의 1/100 수준)
+    {'params': model.vit.parameters(), 'lr': 1e-6}, 
+    # 분류기(Head): 원래 속도로
+    {'params': model.classifier.parameters(), 'lr': 1e-4}
+    ], weight_decay=0.05) # Weight Decay를 좀 더 높여서 암기를 방지해!  
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
 

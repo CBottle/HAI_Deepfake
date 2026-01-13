@@ -71,6 +71,10 @@ extracted_frames/
 model/*.pt
 checkpoints/*.pt
 
+# Caffe Models (Face Detection)
+deploy.prototxt
+res10_300x300_ssd_iter_140000.caffemodel
+
 # 제출 파일 (결과물만 보관)
 # submissions/*.csv는 추적하되, 큰 파일은 제외
 submissions/*.zip
