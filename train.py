@@ -211,6 +211,24 @@ def main():
     A.GridDistortion(p=0.3), 
     ])
 
+
+    print(f"Creating training dataset and loader...")
+    train_dataset = DeepfakeDataset(
+        data_dir=train_dir,
+        processor=processor,
+        num_frames=config['data']['num_frames'],
+        transform=hard_transform  # 위에서 정의한 빡센 증강 기법 적용!
+    )
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=config['training']['batch_size'],
+        shuffle=True, # 학습 데이터는 섞어주는 게 국룰!
+        num_workers=config['training'].get('num_workers', 4),
+        pin_memory=True if device == 'cuda' else False
+    )
+    print(f"Training samples: {len(train_dataset)}")
+    
     # 검증 데이터 로더 설정
     val_loader = None
     if val_dir and os.path.exists(val_dir):
