@@ -19,7 +19,7 @@ data:
   train_dir: "/content/train_data/Train/"
   val_dir: "/content/train_data/Validation/"
   test_dir: "/content/test_data/test_data/"
-  num_frames: 10  # 비디오 샘플링 프레임 수
+  num_frames: 1  # 비디오 샘플링 프레임 수
   image_size: 224
 
   # 데이터 증강

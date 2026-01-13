@@ -1,280 +1,160 @@
-"""
-비디오에서 프레임 추출 스크립트
-
-Kaggle 딥페이크 데이터셋의 비디오 파일을 이미지로 변환합니다.
-train_data/real, train_data/fake 폴더 구조로 자동 정리합니다.
-
-사용법:
-    python scripts/extract_frames.py --input datasets/faceforensics --output train_data
-"""
-
 import argparse
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import List, Optional
 from tqdm import tqdm
 import multiprocessing as mp
 from functools import partial
+import urllib.request
+import os
 
+# 1. 모델 다운로드 URL 설정
+PROTO_URL = "https://raw.githubusercontent.com/opencv/opencv/master/samples/dnn/face_detector/deploy.prototxt"
+MODEL_URL = "https://raw.githubusercontent.com/opencv/opencv_3rdparty/dnn_samples_face_detector_20170830/res10_300x300_ssd_iter_140000.caffemodel"
 
-class VideoFrameExtractor:
-    """비디오 프레임 추출기"""
+def download_model():
+    """모델 파일이 없으면 다운로드하고 절대 경로를 반환합니다."""
+    curr_dir = Path(os.getcwd())
+    proto_path = curr_dir / "deploy.prototxt"
+    model_path = curr_dir / "res10_300x300_ssd_iter_140000.caffemodel"
+    
+    if not proto_path.exists():
+        print("📥 모델 설정 파일(prototxt) 다운로드 중...")
+        urllib.request.urlretrieve(PROTO_URL, str(proto_path))
+    if not model_path.exists():
+        print("📥 모델 가중치 파일(caffemodel) 다운로드 중...")
+        urllib.request.urlretrieve(MODEL_URL, str(model_path))
+    
+    return str(proto_path.absolute()), str(model_path.absolute())
 
-    VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv"}
+def extract_worker(video_info, proto_path, model_path, max_frames, sample_method, min_face_size, quality, margin):
+    """각 프로세스에서 실행될 실제 크롭 로직"""
+    video_path, output_root, label = video_info
+    
+    # 워커 내부에서 DNN 모델 로드 (절대 경로 사용)
+    try:
+        net = cv2.dnn.readNetFromCaffe(proto_path, model_path)
+    except Exception as e:
+        return 0
 
-    def __init__(
-        self,
-        max_frames: int = 30,
-        sample_method: str = "uniform",
-        min_face_size: int = 64,
-        quality: int = 95,
-    ):
-        """
-        Args:
-            max_frames: 비디오당 최대 추출 프레임 수
-            sample_method: 샘플링 방법 ('uniform', 'random', 'first')
-            min_face_size: 최소 얼굴 크기 (픽셀)
-            quality: JPEG 품질 (0-100)
-        """
+    cap = cv2.VideoCapture(str(video_path))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total_frames <= 0:
+        cap.release()
+        return 0
+
+    # 샘플링 인덱스 결정
+    num_to_sample = min(max_frames, total_frames)
+    if sample_method == "uniform":
+        frame_indices = np.linspace(0, total_frames - 1, num_to_sample, dtype=int)
+    else:
+        frame_indices = np.sort(np.random.choice(total_frames, num_to_sample, replace=False))
+
+    video_name = video_path.stem
+    extracted_count = 0
+
+    for idx in frame_indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+        ret, frame = cap.read()
+        if not ret: continue
+
+        (h, w) = frame.shape[:2]
+        # 얼굴 탐지를 위한 전처리
+        blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0))
+        net.setInput(blob)
+        detections = net.forward()
+
+        best_confidence = 0
+        best_box = None
+
+        for i in range(0, detections.shape[2]):
+            confidence = detections[0, 0, i, 2]
+            if confidence > 0.5: # 신뢰도 50% 이상만
+                box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+                (startX, startY, endX, endY) = box.astype("int")
+                
+                if (endX - startX) > min_face_size:
+                    if confidence > best_confidence:
+                        best_confidence = confidence
+                        best_box = (startX, startY, endX, endY)
+
+        if best_box:
+            (x1, y1, x2, y2) = best_box
+            fw, fh = x2 - x1, y2 - y1
+            
+            # 마진 적용 (얼굴 주변 여유분)
+            mx, my = int(fw * margin), int(fh * margin)
+            nx1, ny1 = max(0, x1 - mx), max(0, y1 - my)
+            nx2, ny2 = min(w, x2 + mx), min(h, y2 + my)
+
+            face_crop = frame[ny1:ny2, nx1:nx2]
+            
+            # 저장 경로 설정
+            save_dir = output_root / label
+            save_dir.mkdir(parents=True, exist_ok=True)
+            output_path = save_dir / f"{video_name}_idx{idx:04d}.jpg"
+            
+            cv2.imwrite(str(output_path), face_crop, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            extracted_count += 1
+
+    cap.release()
+    return extracted_count
+
+class FaceExtractor:
+    def __init__(self, max_frames=20, sample_method="uniform", min_face_size=128, quality=95, margin=0.25):
         self.max_frames = max_frames
         self.sample_method = sample_method
         self.min_face_size = min_face_size
         self.quality = quality
+        self.margin = margin
 
-    def extract_frames_from_video(
-        self, video_path: Path, output_dir: Path, label: str
-    ) -> int:
-        """
-        비디오에서 프레임 추출
-
-        Args:
-            video_path: 비디오 파일 경로
-            output_dir: 출력 디렉토리
-            label: 레이블 ('real' or 'fake')
-
-        Returns:
-            추출된 프레임 수
-        """
-        cap = cv2.VideoCapture(str(video_path))
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-        if total_frames <= 0:
-            cap.release()
-            return 0
-
-        # 샘플링 인덱스 결정
-        frame_indices = self._get_frame_indices(total_frames)
-
-        # 출력 디렉토리 생성
-        label_dir = output_dir / label
-        label_dir.mkdir(parents=True, exist_ok=True)
-
-        # 비디오 이름 (확장자 제거)
-        video_name = video_path.stem
-
-        extracted_count = 0
-
-        for idx in frame_indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
-            ret, frame = cap.read()
-
-            if not ret:
+    def run(self, input_path: str, output_path: str, num_workers=4):
+        # 1. 모델 준비 및 절대 경로 가져오기
+        proto_abs, model_abs = download_model()
+        
+        input_root = Path(input_path)
+        output_root = Path(output_path)
+        
+        print(f"🚀 [Face-Crop] 작업을 시작합니다.")
+        
+        for label in ["real", "fake"]:
+            target_dir = input_root / label
+            if not target_dir.exists():
+                print(f"⚠️ {label} 폴더를 찾을 수 없습니다.")
                 continue
 
-            # RGB 변환
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            video_files = [v for v in target_dir.glob("*") if v.suffix.lower() in {".mp4", ".avi", ".mov", ".mkv"}]
+            print(f"📹 {label.upper()} 비디오 개수: {len(video_files)}개")
 
-            # 프레임 저장
-            output_path = label_dir / f"{video_name}_frame_{idx:04d}.jpg"
-            cv2.imwrite(
-                str(output_path),
-                cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR),
-                [cv2.IMWRITE_JPEG_QUALITY, self.quality],
+            # 워커에 고정 인자 전달 (모델 경로 포함)
+            worker_fn = partial(
+                extract_worker, 
+                proto_path=proto_abs,
+                model_path=model_abs,
+                max_frames=self.max_frames, 
+                sample_method=self.sample_method,
+                min_face_size=self.min_face_size, 
+                quality=self.quality, 
+                margin=self.margin
             )
-            extracted_count += 1
+            
+            video_infos = [(v, output_root, label) for v in video_files]
 
-        cap.release()
-        return extracted_count
-
-    def _get_frame_indices(self, total_frames: int) -> List[int]:
-        """
-        프레임 샘플링 인덱스 계산
-
-        Args:
-            total_frames: 전체 프레임 수
-
-        Returns:
-            샘플링할 프레임 인덱스 리스트
-        """
-        num_frames = min(self.max_frames, total_frames)
-
-        if self.sample_method == "uniform":
-            # 균등 샘플링
-            indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
-
-        elif self.sample_method == "random":
-            # 랜덤 샘플링
-            indices = np.random.choice(total_frames, num_frames, replace=False)
-            indices = np.sort(indices)
-
-        elif self.sample_method == "first":
-            # 처음 N개
-            indices = np.arange(num_frames)
-
-        else:
-            raise ValueError(f"Unknown sample method: {self.sample_method}")
-
-        return indices.tolist()
-
-    def process_dataset(
-        self,
-        input_dir: Path,
-        output_dir: Path,
-        max_videos: Optional[int] = None,
-        num_workers: int = 4,
-    ):
-        """
-        데이터셋 전체 처리
-
-        Args:
-            input_dir: 입력 디렉토리 (real/, fake/ 하위 폴더 가정)
-            output_dir: 출력 디렉토리
-            max_videos: 최대 처리 비디오 수 (None이면 전체)
-            num_workers: 병렬 처리 워커 수
-        """
-        print(f"🎬 비디오 → 이미지 변환 시작")
-        print(f"📂 입력: {input_dir}")
-        print(f"📁 출력: {output_dir}")
-        print(f"⚙️  설정: {self.max_frames} frames/video, {self.sample_method} sampling")
-        print("-" * 70)
-
-        # real, fake 폴더 찾기
-        for label in ["real", "fake"]:
-            label_dir = input_dir / label
-
-            if not label_dir.exists():
-                print(f"⚠️  {label} 폴더를 찾을 수 없습니다: {label_dir}")
-                continue
-
-            # 비디오 파일 수집
-            video_files = []
-            for ext in self.VIDEO_EXTS:
-                video_files.extend(label_dir.glob(f"*{ext}"))
-
-            if max_videos:
-                video_files = video_files[:max_videos]
-
-            print(f"\n📹 {label.upper()} 비디오: {len(video_files)}개")
-
-            if len(video_files) == 0:
-                print(f"   ⚠️  비디오 파일이 없습니다.")
-                continue
-
-            # 프레임 추출
-            total_frames = 0
-
-            for video_path in tqdm(video_files, desc=f"Processing {label}"):
-                count = self.extract_frames_from_video(video_path, output_dir, label)
-                total_frames += count
-
-            print(f"   ✅ 추출 완료: {total_frames} 프레임")
-
-        # 결과 요약
-        self.print_summary(output_dir)
-
-    def print_summary(self, output_dir: Path):
-        """결과 요약 출력"""
-        print("\n" + "=" * 70)
-        print("📊 데이터셋 요약")
-        print("=" * 70)
-
-        for label in ["real", "fake"]:
-            label_dir = output_dir / label
-            if label_dir.exists():
-                images = list(label_dir.glob("*.jpg"))
-                print(f"  {label.upper():5s}: {len(images):6,d} 이미지")
-
-        print("=" * 70)
-
+            with mp.Pool(num_workers) as pool:
+                results = list(tqdm(pool.imap(worker_fn, video_infos), total=len(video_infos), desc=f"Extracting {label}"))
+            
+            print(f"✅ {label.upper()} 완료: 총 {sum(results)}개 프레임 추출")
 
 def parse_args():
-    """명령행 인자 파싱"""
-    parser = argparse.ArgumentParser(description="비디오에서 프레임 추출")
-
-    parser.add_argument(
-        "--input",
-        type=str,
-        required=True,
-        help="입력 디렉토리 (real/, fake/ 하위 폴더 필요)",
-    )
-
-    parser.add_argument(
-        "--output",
-        type=str,
-        default="train_data",
-        help="출력 디렉토리 (기본: train_data)",
-    )
-
-    parser.add_argument(
-        "--max-frames", type=int, default=30, help="비디오당 최대 프레임 수 (기본: 30)"
-    )
-
-    parser.add_argument(
-        "--sample-method",
-        type=str,
-        choices=["uniform", "random", "first"],
-        default="uniform",
-        help="샘플링 방법 (기본: uniform)",
-    )
-
-    parser.add_argument(
-        "--max-videos",
-        type=int,
-        default=None,
-        help="최대 처리 비디오 수 (테스트용, 기본: 전체)",
-    )
-
-    parser.add_argument(
-        "--quality", type=int, default=95, help="JPEG 품질 (0-100, 기본: 95)"
-    )
-
-    parser.add_argument(
-        "--num-workers", type=int, default=4, help="병렬 처리 워커 수 (기본: 4)"
-    )
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", type=str, required=True)
+    parser.add_argument("--output", type=str, required=True)
+    parser.add_argument("--num-workers", type=int, default=4)
     return parser.parse_args()
 
-
-def main():
-    """메인 함수"""
-    args = parse_args()
-
-    input_dir = Path(args.input)
-    output_dir = Path(args.output)
-
-    if not input_dir.exists():
-        print(f"❌ 입력 디렉토리를 찾을 수 없습니다: {input_dir}")
-        return
-
-    # 추출기 초기화
-    extractor = VideoFrameExtractor(
-        max_frames=args.max_frames,
-        sample_method=args.sample_method,
-        quality=args.quality,
-    )
-
-    # 처리 시작
-    extractor.process_dataset(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        max_videos=args.max_videos,
-        num_workers=args.num_workers,
-    )
-
-    print("\n✅ 모든 프레임 추출 완료!")
-    print(f"📁 출력 위치: {output_dir.absolute()}")
-
-
 if __name__ == "__main__":
-    main()
+    # 윈도우 멀티프로세싱 필수 구문
+    args = parse_args()
+    
+    extractor = FaceExtractor(max_frames=20, min_face_size=128)
+    extractor.run(args.input, args.output, num_workers=args.num_workers)
