@@ -236,11 +236,12 @@ def main():
     class_weights = torch.tensor([1.0, 3.0]).to(device)
     criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
     optimizer = torch.optim.AdamW([
-    # ViT 백본: 아주 조심스럽게 (기존 LR의 1/100 수준)
-    {'params': model.vit.parameters(), 'lr': 1e-6}, 
-    # 분류기(Head): 원래 속도로
-    {'params': model.classifier.parameters(), 'lr': 1e-4}
-    ], weight_decay=0.05) # Weight Decay를 좀 더 높여서 암기를 방지해!  
+        # ViT 백본: 아주 조심스럽게 (model.model.vit 로 접근!)
+        {'params': model.model.vit.parameters(), 'lr': 1e-6}, 
+    
+        # 분류기(Head): 원래 속도로 (model.model.classifier 로 접근!)
+        {'params': model.model.classifier.parameters(), 'lr': 1e-4}
+    ], weight_decay=0.05) 
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
 
