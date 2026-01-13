@@ -18,35 +18,60 @@ import random
 
 class DeepfakeDataset(Dataset):
     """
-    딥페이크 탐지 데이터셋
-
-    Args:
-        data_dir: 데이터 디렉토리 경로
-        processor: 이미지 프로세서
-        num_frames: 비디오에서 추출할 프레임 수
-        transform: 추가 데이터 증강 (Optional)
+    GRAVEX-200K (CSV 기반) 데이터셋 로더
     """
-
-    IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".jfif"}
-    VIDEO_EXTS = {".mp4", ".mov"}
-
     def __init__(
         self,
-        data_dir: str,
+        csv_path: str,         # labels.csv 경로
+        img_dir: str,          # 실제 이미지들이 모여있는 폴더 경로
         processor: ViTImageProcessor,
-        num_frames: int = 10,
-        transform=None
+        transform=None,
+        num_frames: int = 1    # 현재 데이터셋은 이미지이므로 1로 기본값 설정
     ):
-        self.data_dir = Path(data_dir)
+        self.img_dir = Path(img_dir)
         self.processor = processor
-        self.num_frames = num_frames
         self.transform = transform
+        self.num_frames = num_frames
 
-        # 클래스 매핑 (Real: 0, Fake: 1)
-        self.class_to_idx = {"Real": 0, "Fake": 1}
+        # 1. CSV 파일 로드
+        self.data_df = pd.read_csv(csv_path)
         
-        # 파일 목록과 레이블 수집
-        self.samples = self._collect_samples()
+        # 2. 샘플 리스트 생성 (기존 self.samples 구조 유지: [(경로, 라벨), ...])
+        self.samples = []
+        for _, row in self.data_df.iterrows():
+            img_path = self.img_dir / row['filename']
+            label = int(row['label'])
+            self.samples.append((str(img_path), label))
+            
+        print(f"✅ {csv_path} 로드 완료: {len(self.samples)}개의 샘플")
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        img_path, label = self.samples[idx]
+
+        # 이미지 읽기
+        image = cv2.imread(img_path)
+        if image is None:
+            # 이미지가 깨졌을 경우를 대비해 검은 이미지 생성 (에러 방지)
+            image = np.zeros((224, 224, 3), dtype=np.uint8)
+        else:
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        # Albumentations 증강 적용
+        if self.transform:
+            augmented = self.transform(image=image)
+            image = augmented['image']
+
+        # ViT Processor 적용
+        # (만약 transform에서 이미 Tensor로 변환했다면 이 부분은 세부 조정이 필요할 수 있어)
+        inputs = self.processor(images=image, return_tensors="pt")
+        
+        return {
+            "pixel_values": inputs["pixel_values"].squeeze(0),
+            "labels": torch.tensor(label, dtype=torch.long)
+        }
 
     def _collect_samples(self) -> List[Tuple[Path, int]]:
         """데이터 디렉토리에서 (파일 경로, 레이블) 쌍 수집"""

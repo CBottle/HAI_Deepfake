@@ -213,11 +213,14 @@ def main():
 
 
     print(f"Creating training dataset and loader...")
+
+    # 1. 학습(Train) 데이터셋
     train_dataset = DeepfakeDataset(
-        data_dir=train_dir,
+        csv_path=config['data']['train_csv'],    # 추가!
+        img_dir=config['data']['img_dir'],      # 추가!
         processor=processor,
         num_frames=config['data']['num_frames'],
-        transform=hard_transform  # 위에서 정의한 빡센 증강 기법 적용!
+        transform=hard_transform
     )
 
     train_loader = DataLoader(
@@ -229,29 +232,41 @@ def main():
     )
     print(f"Training samples: {len(train_dataset)}")
     
-    # 검증 데이터 로더 설정
+# 검증 데이터 로더 설정
     val_loader = None
-    if val_dir and os.path.exists(val_dir):
-        print(f"Loading validation data from: {val_dir}")
+    
+    # 1. Config에서 새롭게 정의한 경로들 가져오기
+    val_csv = config['data'].get('val_csv')
+    img_dir = config['data'].get('img_dir')
+
+    # 2. CSV 파일이 실제로 존재하는지 확인
+    if val_csv and os.path.exists(val_csv):
+        print(f"Loading validation data from CSV: {val_csv}")
+        
+        # 3. 바뀐 DeepfakeDataset 인자값에 맞춰 호출
         val_dataset = DeepfakeDataset(
-            data_dir=val_dir,
+            csv_path=val_csv,
+            img_dir=img_dir,
             processor=processor,
-            num_frames=config['data']['num_frames']
+            num_frames=config['data']['num_frames'],
+            transform=val_transform  # 검증용 transform (보통 Resize, Normalize 정도)
         )
+        
         if len(val_dataset) > 0:
             val_loader = DataLoader(
                 val_dataset,
                 batch_size=config['validation']['batch_size'],
                 shuffle=False,
-                num_workers=config['validation'].get('num_workers', 2)
+                num_workers=config['validation'].get('num_workers', 2),
+                pin_memory=True  # GPU 전송 속도를 위해 추가하면 좋아!
             )
             print(f"Validation samples: {len(val_dataset)}")
     
     if not val_loader:
-        print("Warning: Validation skipped (no validation data found)")
+        print("Warning: Validation skipped (no validation CSV found or path invalid)")
 
     # 손실 함수 및 옵티마이저
-    class_weights = torch.tensor([1.0, 3.0]).to(device)
+    class_weights = torch.tensor([1.0, 1.0]).to(device)
     criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
     optimizer = torch.optim.AdamW([
         # ViT 백본: 아주 조심스럽게 (model.model.vit 로 접근!)

@@ -16,10 +16,16 @@ model:
 
 # 데이터 설정
 data:
-  train_dir: "/content/train_data/Train/"
-  val_dir: "/content/train_data/Validation/"
-  test_dir: "/content/test_data/test_data/"
-  num_frames: 1  # 비디오 샘플링 프레임 수
+  # 1. 실제 이미지들이 몽땅 들어있는 폴더 경로
+  img_dir: "/content/train_data/GRAVEX_200K/my_real_vs_ai_dataset/my_real_vs_ai_dataset"
+  
+  # 2. 각 데이터셋의 정답지(CSV) 경로
+  train_csv: "/content/train_data/GRAVEX_200K/train_labels.csv"
+  val_csv: "/content/train_data/GRAVEX_200K/val_labels.csv"
+  test_csv: "/content/train_data/GRAVEX_200K/test_labels.csv"
+  
+  # 3. 모델 설정 관련
+  num_frames: 1  # 현재 이미지 데이터셋이므로 1로 설정
   image_size: 224
 
   # 데이터 증강
