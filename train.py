@@ -210,20 +210,6 @@ def main():
     # 5. 공간적 왜곡
     A.GridDistortion(p=0.3), 
     ])
-    
-    # 데이터가 없으면 경고
-    if len(train_dataset) == 0:
-        print("Error: No training data found! Please run 'create_dummy_data.py' first.")
-        return
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config['training']['batch_size'],
-        shuffle=True,
-        num_workers=0 if args.debug else config['training']['num_workers']
-    )
-    
-    print(f"Training samples: {len(train_dataset)}")
 
     # 검증 데이터 로더 설정
     val_loader = None
