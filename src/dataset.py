@@ -24,7 +24,7 @@ class DeepfakeDataset(Dataset):
     """
 
     IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
-    
+
     def __init__(
         self,
         csv_path: str,         # labels.csv 경로
@@ -153,7 +153,7 @@ class DeepfakeDataset(Dataset):
         return {
             'pixel_values': pixel_values,
             'labels': label,
-            'filename': file_path.name
+            'filename': Path(file_path).name
         }
 
     def _read_frames(self, file_path: Path) -> List[np.ndarray]:
