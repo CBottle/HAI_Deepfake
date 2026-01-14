@@ -44,16 +44,6 @@ def parse_args():
                         help='Debug mode (small dataset)')
     return parser.parse_args()
 
-# train_loader에서 첫 번째 배치를 꺼내서 확인해보자
-batch = next(iter(train_loader))
-images = batch['pixel_values'] # 혹은 'image' 변수명 확인
-labels = batch['labels']
-
-print(f"📸 이미지 텐서 모양: {images.shape}") # [Batch, 3, 224, 224] 여야 함
-print(f"🏷️ 이번 배치 라벨: {labels}") # 0과 1이 섞여 있는지 확인!
-print(f"📊 이미지 평균값: {images.mean().item():.4f}") # 0.0000 이면 이미지를 못 읽는 중!
-
-
 def train_epoch(model, dataloader, criterion, optimizer, device, scaler=None):
     """
     한 에포크 학습
@@ -201,6 +191,16 @@ def main():
         shuffle=True
     )
 
+    print("\n🔍 [데이터 긴급 점검]")
+    batch = next(iter(train_loader))
+    debug_images = batch['pixel_values']
+    debug_labels = batch['labels']
+
+    print(f"📸 이미지 텐서 모양: {debug_images.shape}") 
+    print(f"🏷️ 이번 배치 라벨: {debug_labels.tolist()}") 
+    print(f"📊 이미지 평균값: {debug_images.mean().item():.4f}")
+    print(f"📊 이미지 최소/최대: {debug_images.min().item():.4f} / {debug_images.max().item():.4f}")
+
     # 옵티마이저 (학습 반응을 보기 위해 LR을 조금 높게 설정)
     optimizer = torch.optim.AdamW([
         {'params': model.model.vit.parameters(), 'lr': 1e-4}, 
@@ -210,7 +210,7 @@ def main():
     # ⚠️ 네 코드에 scheduler가 주석처리 되어있어서 에러 날 수 있어!
     # 테스트할 때는 아래 한 줄을 활성화하거나, 루프 안의 scheduler.step()을 주석처리해.
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
-
+    
     # 학습 루프 (샌니티 체크는 10~20 에포크만 봐도 충분해)
     print("\n=== Start Sanity Check (100 Samples) ===")
     for epoch in range(20):
