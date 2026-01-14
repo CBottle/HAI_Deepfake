@@ -216,7 +216,7 @@ def main():
 
     # 1. 학습(Train) 데이터셋
     train_dataset = DeepfakeDataset(
-        csv_path=config['data']['train_csv'],    # 추가!
+        csv_path=config['data']['train_dir'],    # 추가!
         img_dir=config['data']['img_dir'],      # 추가!
         processor=processor,
         num_frames=config['data']['num_frames'],
