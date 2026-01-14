@@ -191,15 +191,13 @@ def main():
         shuffle=True
     )
 
-    print("\n🔍 [데이터 긴급 점검]")
-    batch = next(iter(train_loader))
-    debug_images = batch['pixel_values']
-    debug_labels = batch['labels']
+    # main 함수 안, DataLoader 정의 직후에 넣어봐!
+    import os
 
-    print(f"📸 이미지 텐서 모양: {debug_images.shape}") 
-    print(f"🏷️ 이번 배치 라벨: {debug_labels.tolist()}") 
-    print(f"📊 이미지 평균값: {debug_images.mean().item():.4f}")
-    print(f"📊 이미지 최소/최대: {debug_images.min().item():.4f} / {debug_images.max().item():.4f}")
+    # 데이터셋에서 샘플 하나만 꺼내서 경로 확인
+    sample_idx = 0
+    img_name = train_dataset.data_df.iloc[sample_idx]['filename'] # 'filename'은 네 CSV 컬럼명에 맞춰!
+    full_path = os.path.join(config['data']['img_dir'], img_name)
 
     # 옵티마이저 (학습 반응을 보기 위해 LR을 조금 높게 설정)
     optimizer = torch.optim.AdamW([
