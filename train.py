@@ -170,9 +170,9 @@ def main():
     print("ViT Backbone is frozen. Only the classifier will be trained for the first 3 epochs.")
 
     # 데이터셋 준비
-    train_dir = config['data']['train_dir']
-    val_dir = config['data'].get('val_dir', None)
-    print(f"Loading training data from: {train_dir}")
+    train_csv = config['data']['train_csv']
+    val_csv = config['data'].get('val_csv', None)
+    print(f"Loading training data from: {train_csv}")
     
     # 디버그 모드일 때 설정 조정
     if args.debug:
@@ -216,7 +216,7 @@ def main():
 
     # 1. 학습(Train) 데이터셋
     train_dataset = DeepfakeDataset(
-        csv_path=config['data']['train_dir'],    # 추가!
+        csv_path=config['data']['train_cvs'],    # 추가!
         img_dir=config['data']['img_dir'],      # 추가!
         processor=processor,
         num_frames=config['data']['num_frames'],
