@@ -22,6 +22,9 @@ class DeepfakeDataset(Dataset):
     """
     GRAVEX-200K (CSV 기반) 데이터셋 로더
     """
+
+    IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
+    
     def __init__(
         self,
         csv_path: str,         # labels.csv 경로
