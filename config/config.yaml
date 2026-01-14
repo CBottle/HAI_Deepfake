@@ -17,7 +17,7 @@ model:
 # 데이터 설정
 data:
   # 1. 실제 이미지들이 몽땅 들어있는 폴더 경로
-  img_dir: "/content/train_data/GRAVEX_200K/my_real_vs_ai_dataset/my_real_vs_ai_dataset"
+  img_dir: "/content/train_data/combined_images"
   
   # 2. 각 데이터셋의 정답지(CSV) 경로
   train_csv: "/content/train_data/GRAVEX_200K/train_labels.csv"
