@@ -233,7 +233,7 @@ def main():
         train_dataset,
         batch_size=config['training']['batch_size'],
         shuffle=True, # 학습 데이터는 섞어주는 게 국룰!
-        num_workers=config['training'].get('num_workers', 4),
+        num_workers=config['training'].get('num_workers', 2),
         pin_memory=True if device == 'cuda' else False
     )
     print(f"Training samples: {len(train_dataset)}")

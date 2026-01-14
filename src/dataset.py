@@ -15,6 +15,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from transformers import ViTImageProcessor
 import random
+from pathlib import Path
 
 
 class DeepfakeDataset(Dataset):
@@ -154,7 +155,7 @@ class DeepfakeDataset(Dataset):
 
     def _read_frames(self, file_path: Path) -> List[np.ndarray]:
         """이미지 또는 비디오에서 프레임 추출"""
-        ext = file_path.suffix.lower()
+        ext = Path(file_path).suffix.lower()
 
         # 이미지 파일
         if ext in self.IMAGE_EXTS:
