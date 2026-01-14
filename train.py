@@ -134,18 +134,92 @@ def validate(model, dataloader, criterion, device):
 
 
 def main():
-    """메인 학습 루프"""
     args = parse_args()
-
-    # 설정 로드
     config = load_config(args.config)
-
-    # 시드 설정
     set_seed(config['experiment']['seed'])
 
-    # 디바이스 설정
-    device = get_device() if not args.debug else 'cpu'
-    print(f"Device: {device}")
+    # 1. CPU 강제 설정 (테스트용)
+    device = torch.device('cpu') 
+    print(f"Device forced to: {device}")
+
+    # 2. 데이터 100장 샘플링 및 임시 CSV 생성
+    import pandas as pd
+    full_df = pd.read_csv(config['data']['train_csv'])
+    
+    # Label이 0(Real), 1(Fake)라고 가정 (데이터에 맞춰 확인해!)
+    df_real = full_df[full_df['label'] == 0].sample(n=min(50, len(full_df[full_df['label']==0])), random_state=42)
+    df_fake = full_df[full_df['label'] == 1].sample(n=min(50, len(full_df[full_df['label']==1])), random_state=42)
+    tiny_df = pd.concat([df_real, df_fake]).reset_index(drop=True)
+    
+    # 임시 CSV 저장 (DeepfakeDataset이 경로를 받으므로)
+    tiny_csv_path = 'config/tiny_train.csv'
+    tiny_df.to_csv(tiny_csv_path, index=False)
+    print(f"✅ Tiny Dataset 생성 완료 (100장): {tiny_csv_path}")
+
+    # 모델 초기화
+    processor = ViTImageProcessor.from_pretrained(config['model']['name'])
+    model = DeepfakeDetector(
+        model_name=config['model']['name'],
+        num_classes=config['model']['num_classes'],
+        pretrained=config['model']['pretrained']
+    ).to(device)
+
+    # 3. 샌니티 체크를 위해 모든 레이어 열기 (Unfreeze)
+    # 3에포크 기다리지 말고 지금 바로 다 학습 가능하게 만들어
+    for param in model.parameters():
+        param.requires_grad = True
+    print("🚀 All layers unfrozen for Sanity Check.")
+
+    # 데이터셋 준비 (샘플링한 CSV 경로 사용)
+    train_dataset = DeepfakeDataset(
+        csv_path=tiny_csv_path, # 임시 CSV 사용
+        img_dir=config['data']['img_dir'],
+        processor=processor,
+        num_frames=config['data']['num_frames'],
+        transform=val_transform # 샌니티 체크는 증강 없이 깔끔하게 테스트!
+    )
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=4, # CPU니까 배치는 작게
+        shuffle=True
+    )
+
+    # 옵티마이저 (학습 반응을 보기 위해 LR을 조금 높게 설정)
+    optimizer = torch.optim.AdamW([
+        {'params': model.model.vit.parameters(), 'lr': 1e-4}, 
+        {'params': model.model.classifier.parameters(), 'lr': 1e-3}
+    ], weight_decay=0.05)
+
+    # ⚠️ 네 코드에 scheduler가 주석처리 되어있어서 에러 날 수 있어!
+    # 테스트할 때는 아래 한 줄을 활성화하거나, 루프 안의 scheduler.step()을 주석처리해.
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+
+    # 학습 루프 (샌니티 체크는 10~20 에포크만 봐도 충분해)
+    print("\n=== Start Sanity Check (100 Samples) ===")
+    for epoch in range(20):
+        train_loss = train_epoch(model, train_loader, torch.nn.CrossEntropyLoss(), optimizer, device)
+        
+        # 100장에 대한 AUC 직접 계산해서 출력해보기
+        # (validate 함수를 tiny_loader에 대해 돌려도 돼)
+        _, tiny_auc = validate(model, train_loader, torch.nn.CrossEntropyLoss(), device)
+        
+        print(f"Epoch {epoch+1} - Loss: {train_loss:.4f}, AUC: {tiny_auc:.4f}")
+        
+        if tiny_auc > 0.95:
+            print("🎉 Success! 모델이 100장의 데이터를 학습하기 시작했어.")
+            break
+
+
+def main():
+    """메인 학습 루프 (100장 CPU 샌니티 체크 버전)"""
+    args = parse_args()
+    config = load_config(args.config)
+    set_seed(config['experiment']['seed'])
+
+    # 1. 디바이스를 CPU로 강제 고정
+    device = torch.device('cpu')
+    print(f"⚠️ Sanity Check 모드: Device를 {device}로 강제 설정함")
 
     # 모델 초기화
     print(f"Initializing model: {config['model']['name']}")
@@ -156,208 +230,69 @@ def main():
         pretrained=config['model']['pretrained']
     ).to(device)
 
-    # 처음에는 ViT의 몸통(Backbone)은 얼리고 분류기(Head)만 학습하자
+    # 2. 샌니티 체크를 위해 모든 레이어의 학습을 허용 (Unfreeze)
     for param in model.parameters():
-        param.requires_grad = False
+        param.requires_grad = True
+    print("🚀 모든 레이어를 Unfreeze 했습니다. (백본 포함)")
 
-    # 2. 마지막 분류기(classifier)만 다시 녹여서 공부하게 만들어
-    # 모델 내부에 'classifier'라는 이름이 들어간 레이어만 찾아서requires_grad를 True로 바꿔줘
-    for name, param in model.named_parameters():
-        if "classifier" in name:
-            param.requires_grad = True
-            print(f"Layer {name} is unfrozen and ready to learn!")
-
-    print("ViT Backbone is frozen. Only the classifier will be trained for the first 3 epochs.")
-
-    # 데이터셋 준비
+    # 3. 데이터셋 준비 및 100장 샘플링 로직
+    import pandas as pd
     train_csv = config['data']['train_csv']
-    val_csv = config['data'].get('val_csv', None)
-    print(f"Loading training data from: {train_csv}")
+    print(f"Loading training data for sampling: {train_csv}")
     
-    # 디버그 모드일 때 설정 조정
-    if args.debug:
-        config['training']['epochs'] = 2  # 빠르게 2에포크만
-        config['training']['batch_size'] = 2
-        print("Debug mode enabled: epochs=2, batch_size=2")
-
-    hard_transform = A.Compose([
-        # 1. 기하학적 변형 (얼굴 각도와 구도를 계속 바꿈)
-        A.HorizontalFlip(p=0.5),
-        A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.2, rotate_limit=30, p=0.7),
+    full_df = pd.read_csv(train_csv)
     
-        # 2. 강한 노이즈 & 화질 저하 (딥페이크는 압축 노이즈에 약해!)
-        A.OneOf([
-            A.ImageCompression(quality_lower=30, quality_upper=70, p=0.5), # 화질 확 깨기
-            A.GaussNoise(var_limit=(20.0, 100.0), p=0.5), # 지지직거리는 노이즈
-            A.ISONoise(p=0.5),
-        ], p=0.6),
-
-        # 3. 색감 & 조명 테러 (피부 톤이나 조명에 의존하지 못하게)
-        A.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1, p=0.5),
-        A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.5),
+    # 정답 라벨(0, 1)별로 50장씩 추출 (컬럼명이 'label'이라고 가정)
+    # 네 데이터셋의 실제 라벨 컬럼명을 확인해봐!
+    label_col = 'label' 
+    df_real = full_df[full_df[label_col] == 0].sample(n=min(50, len(full_df[full_df[label_col]==0])), random_state=42)
+    df_fake = full_df[full_df[label_col] == 1].sample(n=min(50, len(full_df[full_df[label_col]==1])), random_state=42)
+    tiny_df = pd.concat([df_real, df_fake]).reset_index(drop=True)
     
-        # 4. 필살기: CoarseDropout (Cutout)
-        # 얼굴의 일부분을 검은 사각형으로 가려버려. 
-        # 눈 하나가 없어도 다른 부분(입가, 턱선)의 조작 흔적을 찾게 만드는 훈련이야!
-        A.CoarseDropout(
-            max_holes=8, 
-            max_height=32, 
-            max_width=32, 
-            min_holes=2, 
-            p=0.5
-        ),
-    
-    # 5. 공간적 왜곡
-    A.GridDistortion(p=0.3), 
-    ])
+    # 임시 CSV 파일 저장 (DeepfakeDataset이 경로를 참조하기 때문)
+    tiny_csv_path = 'train_tiny_sample.csv'
+    tiny_df.to_csv(tiny_csv_path, index=False)
+    print(f"✅ 100장 샘플 데이터셋 생성 완료: {tiny_csv_path}")
 
-    val_transform = A.Compose([
-        A.Resize(224, 224), # 모델 입력 크기에 맞춰 (ViT 기준 224)
-        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ToTensorV2()
-    ])
-
-
-    print(f"Creating training dataset and loader...")
-
-    # 1. 학습(Train) 데이터셋
+    # 데이터셋 생성 (샘플링된 CSV 사용)
     train_dataset = DeepfakeDataset(
-        csv_path=config['data']['train_csv'],    # 추가!
-        img_dir=config['data']['img_dir'],      # 추가!
+        csv_path=tiny_csv_path, 
+        img_dir=config['data']['img_dir'],
         processor=processor,
         num_frames=config['data']['num_frames'],
-        transform=hard_transform
+        transform=val_transform # 테스트 때는 증강 없이 깔끔하게 확인!
     )
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=config['training']['batch_size'],
-        shuffle=True, # 학습 데이터는 섞어주는 게 국룰!
-        num_workers=config['training'].get('num_workers', 2),
-        pin_memory=True if device == 'cuda' else False
+        batch_size=4, # CPU니까 작게 설정
+        shuffle=True,
+        num_workers=0 # CPU 테스트 시 에러 방지를 위해 0으로 설정
     )
     print(f"Training samples: {len(train_dataset)}")
-    
-# 검증 데이터 로더 설정
-    val_loader = None
-    
-    # 1. Config에서 새롭게 정의한 경로들 가져오기
-    val_csv = config['data'].get('val_csv')
-    img_dir = config['data'].get('img_dir')
 
-    # 2. CSV 파일이 실제로 존재하는지 확인
-    if val_csv and os.path.exists(val_csv):
-        print(f"Loading validation data from CSV: {val_csv}")
-        
-        # 3. 바뀐 DeepfakeDataset 인자값에 맞춰 호출
-        val_dataset = DeepfakeDataset(
-            csv_path=val_csv,
-            img_dir=img_dir,
-            processor=processor,
-            num_frames=config['data']['num_frames'],
-            transform=val_transform  # 검증용 transform (보통 Resize, Normalize 정도)
-        )
-        
-        if len(val_dataset) > 0:
-            val_loader = DataLoader(
-                val_dataset,
-                batch_size=config['validation']['batch_size'],
-                shuffle=False,
-                num_workers=config['validation'].get('num_workers', 2),
-                pin_memory=True  # GPU 전송 속도를 위해 추가하면 좋아!
-            )
-            print(f"Validation samples: {len(val_dataset)}")
-    
-    if not val_loader:
-        print("Warning: Validation skipped (no validation CSV found or path invalid)")
+    # 손실 함수 및 옵티마이저 (테스트를 위해 LR을 조금 높게 설정)
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.05)
 
-    # 손실 함수 및 옵티마이저
-    class_weights = torch.tensor([1.0, 1.0]).to(device)
-    criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = torch.optim.AdamW([
-        # ViT 백본: 아주 조심스럽게 (model.model.vit 로 접근!)
-        {'params': model.model.vit.parameters(), 'lr': 1e-5}, 
-    
-        # 분류기(Head): 원래 속도로 (model.model.classifier 로 접근!)
-        {'params': model.model.classifier.parameters(), 'lr': 5e-4}
-    ], weight_decay=0.05) 
+    # 학습 루프 (20에포크 정도면 100장은 충분히 외워야 함)
+    print("\n=== Start Sanity Check ===")
+    for epoch in range(20):
+        print(f"\n=== Epoch {epoch + 1}/20 ===")
 
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=15)
-
-    # Mixed Precision
-    scaler = torch.cuda.amp.GradScaler() if config['training']['mixed_precision'] and device == 'cuda' else None
-
-    # 체크포인트에서 재개
-    start_epoch = 0
-    best_auc = 0.0
-
-    if args.resume:
-        checkpoint = load_checkpoint(args.resume, model, optimizer, device)
-        start_epoch = checkpoint['epoch'] + 1
-        best_auc = checkpoint.get('val_auc', 0.0)
-
-    # 학습 루프
-    print("\n=== Start Training ===")
-    
-    for epoch in range(start_epoch, config['training']['epochs']):
-        print(f"\n=== Epoch {epoch + 1}/{config['training']['epochs']} ===")
-
-        # 예: 3에포크 이후부터는 몸통도 같이 학습 (Fine-tuning)
-        if epoch == 3:
-            for param in model.model.parameters():
-                param.requires_grad = True
-            print("ViT Backbone unfrozen. Fine-tuning the whole model...")
-
-        # 학습
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, device, scaler)
+        # 학습 실행 (네가 만든 train_epoch 함수 그대로 사용)
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, device, scaler=None)
         print(f"Train Loss: {train_loss:.4f}")
 
-        # 검증
-        val_loss, val_auc = 0.0, 0.0
-        if val_loader:
-            val_loss, val_auc = validate(model, val_loader, criterion, device)
-            print(f"Validation - Loss: {val_loss:.4f}, AUC: {val_auc:.4f}")
-        
-        # 체크포인트 저장
-        is_best = val_auc > best_auc
-        if is_best:
-            best_auc = val_auc
+        # 100장에 대한 성능 확인 (네가 만든 validate 함수 사용)
+        _, tiny_auc = validate(model, train_loader, criterion, device)
+        print(f"Current AUC on 100 samples: {tiny_auc:.4f}")
 
-        ckpt_dir = config['experiment'].get('output_dir', 'checkpoints')
-        save_checkpoint(
-            model, optimizer, epoch, val_auc=val_auc,
-            checkpoint_dir=ckpt_dir,
-            is_best=is_best
-        )
+        if tiny_auc > 0.98:
+            print("✅ 성공! 모델이 데이터를 학습하고 있어. 이제 코드를 믿어도 돼.")
+            break
 
-        # 에포크 마지막에 스케줄러 업데이트
-        scheduler.step()
-        print(f"Current LR: {scheduler.get_last_lr()[0]}")
-
-        # Google Drive 백업 (Colab 환경인 경우)
-        drive_ckpt_dir = '/content/drive/MyDrive/HAI_Deepfake/checkpoints'
-        if os.path.exists('/content/drive'):
-            try:
-                os.makedirs(drive_ckpt_dir, exist_ok=True)
-                
-                # 현재 에포크 체크포인트 복사
-                ckpt_filename = f'checkpoint_epoch_{epoch:03d}.pt'
-                src_ckpt = os.path.join(ckpt_dir, ckpt_filename)
-                if os.path.exists(src_ckpt):
-                    shutil.copy2(src_ckpt, os.path.join(drive_ckpt_dir, ckpt_filename))
-                    print(f"Backed up checkpoint to Drive: {ckpt_filename}")
-                
-                # 최고 성능 모델 복사
-                if is_best:
-                    src_best = os.path.join(ckpt_dir, 'best_model.pt')
-                    if os.path.exists(src_best):
-                        shutil.copy2(src_best, os.path.join(drive_ckpt_dir, 'best_model.pt'))
-                        print("Backed up best_model.pt to Drive")
-            except Exception as e:
-                print(f"Warning: Failed to backup to Google Drive: {e}")
-
-    print("\nTraining completed successfully!")
-
+    print("\nSanity Check completed!")
 
 if __name__ == '__main__':
     main()
