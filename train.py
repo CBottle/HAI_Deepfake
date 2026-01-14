@@ -170,6 +170,15 @@ def main():
         param.requires_grad = True
     print("🚀 All layers unfrozen for Sanity Check.")
 
+    # main() 함수 내부, train_dataset 생성 직전에 추가해!
+
+    # 1. 전처리 규칙 정의 (Resize + Normalize)
+    val_transform = A.Compose([
+        A.Resize(224, 224), # ViT 기본 입력 크기
+        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ToTensorV2()
+    ]) 
+    
     # 데이터셋 준비 (샘플링한 CSV 경로 사용)
     train_dataset = DeepfakeDataset(
         csv_path=tiny_csv_path, # 임시 CSV 사용
