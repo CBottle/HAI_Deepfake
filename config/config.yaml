@@ -42,7 +42,7 @@ training:
   epochs: 15
   batch_size: 32
   num_workers: 4
-  learning_rate: 5e-5
+  learning_rate: 5e-4
   weight_decay: 1e-4
   warmup_epochs: 5
 

@@ -276,13 +276,13 @@ def main():
     criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
     optimizer = torch.optim.AdamW([
         # ViT 백본: 아주 조심스럽게 (model.model.vit 로 접근!)
-        {'params': model.model.vit.parameters(), 'lr': 1e-6}, 
+        {'params': model.model.vit.parameters(), 'lr': 1e-5}, 
     
         # 분류기(Head): 원래 속도로 (model.model.classifier 로 접근!)
-        {'params': model.model.classifier.parameters(), 'lr': 1e-4}
+        {'params': model.model.classifier.parameters(), 'lr': 5e-4}
     ], weight_decay=0.05) 
 
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=15)
 
     # Mixed Precision
     scaler = torch.cuda.amp.GradScaler() if config['training']['mixed_precision'] and device == 'cuda' else None
