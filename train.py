@@ -170,8 +170,6 @@ def main():
         param.requires_grad = True
     print("🚀 All layers unfrozen for Sanity Check.")
 
-    # main() 함수 내부, train_dataset 생성 직전에 추가해!
-
     # 1. 전처리 규칙 정의 (Resize + Normalize)
     val_transform = A.Compose([
         A.Resize(224, 224), # ViT 기본 입력 크기
@@ -218,90 +216,6 @@ def main():
         if tiny_auc > 0.95:
             print("🎉 Success! 모델이 100장의 데이터를 학습하기 시작했어.")
             break
-
-
-def main():
-    """메인 학습 루프 (100장 CPU 샌니티 체크 버전)"""
-    args = parse_args()
-    config = load_config(args.config)
-    set_seed(config['experiment']['seed'])
-
-    # 1. 디바이스를 CPU로 강제 고정
-    device = torch.device('cpu')
-    print(f"⚠️ Sanity Check 모드: Device를 {device}로 강제 설정함")
-
-    # 모델 초기화
-    print(f"Initializing model: {config['model']['name']}")
-    processor = ViTImageProcessor.from_pretrained(config['model']['name'])
-    model = DeepfakeDetector(
-        model_name=config['model']['name'],
-        num_classes=config['model']['num_classes'],
-        pretrained=config['model']['pretrained']
-    ).to(device)
-
-    # 2. 샌니티 체크를 위해 모든 레이어의 학습을 허용 (Unfreeze)
-    for param in model.parameters():
-        param.requires_grad = True
-    print("🚀 모든 레이어를 Unfreeze 했습니다. (백본 포함)")
-
-    # 3. 데이터셋 준비 및 100장 샘플링 로직
-    import pandas as pd
-    train_csv = config['data']['train_csv']
-    print(f"Loading training data for sampling: {train_csv}")
-    
-    full_df = pd.read_csv(train_csv)
-    
-    # 정답 라벨(0, 1)별로 50장씩 추출 (컬럼명이 'label'이라고 가정)
-    # 네 데이터셋의 실제 라벨 컬럼명을 확인해봐!
-    label_col = 'label' 
-    df_real = full_df[full_df[label_col] == 0].sample(n=min(50, len(full_df[full_df[label_col]==0])), random_state=42)
-    df_fake = full_df[full_df[label_col] == 1].sample(n=min(50, len(full_df[full_df[label_col]==1])), random_state=42)
-    tiny_df = pd.concat([df_real, df_fake]).reset_index(drop=True)
-    
-    # 임시 CSV 파일 저장 (DeepfakeDataset이 경로를 참조하기 때문)
-    tiny_csv_path = 'train_tiny_sample.csv'
-    tiny_df.to_csv(tiny_csv_path, index=False)
-    print(f"✅ 100장 샘플 데이터셋 생성 완료: {tiny_csv_path}")
-
-    # 데이터셋 생성 (샘플링된 CSV 사용)
-    train_dataset = DeepfakeDataset(
-        csv_path=tiny_csv_path, 
-        img_dir=config['data']['img_dir'],
-        processor=processor,
-        num_frames=config['data']['num_frames'],
-        transform=val_transform # 테스트 때는 증강 없이 깔끔하게 확인!
-    )
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=4, # CPU니까 작게 설정
-        shuffle=True,
-        num_workers=0 # CPU 테스트 시 에러 방지를 위해 0으로 설정
-    )
-    print(f"Training samples: {len(train_dataset)}")
-
-    # 손실 함수 및 옵티마이저 (테스트를 위해 LR을 조금 높게 설정)
-    criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.05)
-
-    # 학습 루프 (20에포크 정도면 100장은 충분히 외워야 함)
-    print("\n=== Start Sanity Check ===")
-    for epoch in range(20):
-        print(f"\n=== Epoch {epoch + 1}/20 ===")
-
-        # 학습 실행 (네가 만든 train_epoch 함수 그대로 사용)
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, device, scaler=None)
-        print(f"Train Loss: {train_loss:.4f}")
-
-        # 100장에 대한 성능 확인 (네가 만든 validate 함수 사용)
-        _, tiny_auc = validate(model, train_loader, criterion, device)
-        print(f"Current AUC on 100 samples: {tiny_auc:.4f}")
-
-        if tiny_auc > 0.98:
-            print("✅ 성공! 모델이 데이터를 학습하고 있어. 이제 코드를 믿어도 돼.")
-            break
-
-    print("\nSanity Check completed!")
 
 if __name__ == '__main__':
     main()
