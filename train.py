@@ -211,6 +211,12 @@ def main():
     A.GridDistortion(p=0.3), 
     ])
 
+    val_transform = A.Compose([
+        A.Resize(224, 224), # 모델 입력 크기에 맞춰 (ViT 기준 224)
+        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ToTensorV2()
+    ])
+
 
     print(f"Creating training dataset and loader...")
 
