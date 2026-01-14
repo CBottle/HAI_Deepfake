@@ -44,6 +44,15 @@ def parse_args():
                         help='Debug mode (small dataset)')
     return parser.parse_args()
 
+# train_loader에서 첫 번째 배치를 꺼내서 확인해보자
+batch = next(iter(train_loader))
+images = batch['pixel_values'] # 혹은 'image' 변수명 확인
+labels = batch['labels']
+
+print(f"📸 이미지 텐서 모양: {images.shape}") # [Batch, 3, 224, 224] 여야 함
+print(f"🏷️ 이번 배치 라벨: {labels}") # 0과 1이 섞여 있는지 확인!
+print(f"📊 이미지 평균값: {images.mean().item():.4f}") # 0.0000 이면 이미지를 못 읽는 중!
+
 
 def train_epoch(model, dataloader, criterion, optimizer, device, scaler=None):
     """
