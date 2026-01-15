@@ -235,7 +235,8 @@ class InferenceDataset(Dataset):
             
             # 유효성 검사
             if x2 - x1 > 0 and y2 - y1 > 0:
-                return image[y1:y2, x1:x2]
+                cropped = image[y1:y2, x1:x2]
+                return cropped.astype(np.uint8)
         
         # 얼굴을 못 찾은 경우: 중앙 70% 구역을 잘라냄 (배경 제거 효과)
         img_h, img_w, _ = image.shape
@@ -245,7 +246,7 @@ class InferenceDataset(Dataset):
         start_x = max(0, center_x - crop_w // 2)
         start_y = max(0, center_y - crop_h // 2)
         
-        return image[start_y:start_y+crop_h, start_x:start_x+crop_w]
+        return image[start_y:start_y+crop_h, start_x:start_x+crop_w].astype(np.uint8)
 
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, str, List[Image.Image]]:
