@@ -16,13 +16,14 @@ from torch.utils.data import Dataset
 from transformers import ViTImageProcessor
 import random
 from pathlib import Path
+import mediapipe as mp
 
 
 class DeepfakeDataset(Dataset):
     """
     GRAVEX-200K (CSV 기반) 데이터셋 로더
     """
-
+    # (기존 코드와 동일)
     IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
     VIDEO_EXTS = {'.mp4', '.avi', '.mov', '.mkv'}
 
@@ -156,7 +157,7 @@ class DeepfakeDataset(Dataset):
 
 class InferenceDataset(Dataset):
     """
-    추론용 데이터셋 (레이블 없음)
+    추론용 데이터셋 (레이블 없음) - Face Crop 기능 추가됨
 
     Args:
         data_dir: 데이터 디렉토리 경로
@@ -178,6 +179,12 @@ class InferenceDataset(Dataset):
         self.num_frames = num_frames
 
         self.files = self._collect_files()
+        
+        # MediaPipe Face Detection 초기화
+        self.mp_face_detection = mp.solutions.face_detection.FaceDetection(
+            model_selection=1, # 0: 근거리(2m이내), 1: 원거리(2m이상/전신)
+            min_detection_confidence=0.5
+        )
 
     def _collect_files(self) -> List[Path]:
         """데이터 디렉토리에서 파일 목록 수집"""
@@ -189,6 +196,33 @@ class InferenceDataset(Dataset):
     def __len__(self) -> int:
         return len(self.files)
 
+    def _crop_face(self, image: np.ndarray) -> np.ndarray:
+        """MediaPipe를 사용하여 얼굴을 찾아 크롭 (못 찾으면 원본 반환)"""
+        results = self.mp_face_detection.process(image)
+        
+        if not results.detections:
+            return image
+        
+        # 가장 점수가 높은 얼굴 하나만 선택
+        best_detection = max(results.detections, key=lambda d: d.score[0])
+        bboxC = best_detection.location_data.relative_bounding_box
+        
+        h, w, _ = image.shape
+        x, y, w_box, h_box = int(bboxC.xmin * w), int(bboxC.ymin * h), int(bboxC.width * w), int(bboxC.height * h)
+        
+        # 여유 있게 자르기 (Margin 20%)
+        margin = 0.2
+        x = max(0, x - int(w_box * margin))
+        y = max(0, y - int(h_box * margin))
+        w_box = min(w - x, int(w_box * (1 + 2 * margin)))
+        h_box = min(h - y, int(h_box * (1 + 2 * margin)))
+        
+        # 유효하지 않은 크기면 원본 반환
+        if w_box <= 0 or h_box <= 0:
+            return image
+            
+        return image[y:y+h_box, x:x+w_box]
+
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, str, List[Image.Image]]:
         """
         추론용 샘플 가져오기
@@ -199,18 +233,21 @@ class InferenceDataset(Dataset):
         file_path = self.files[idx]
         frames_rgb = self._read_frames(file_path)
 
-        # PIL Image로 변환
-        frames_pil = [Image.fromarray(f) for f in frames_rgb] if frames_rgb else []
+        # 얼굴 크롭 및 PIL 변환
+        processed_frames = []
+        for f in frames_rgb:
+            cropped = self._crop_face(f)
+            processed_frames.append(Image.fromarray(cropped))
 
-        if frames_pil:
+        if processed_frames:
             # 모든 프레임 처리
-            inputs = self.processor(images=frames_pil, return_tensors="pt")
+            inputs = self.processor(images=processed_frames, return_tensors="pt")
             pixel_values = inputs['pixel_values']
         else:
             # 빈 텐서
             pixel_values = torch.zeros(1, 3, 224, 224)
 
-        return pixel_values, file_path.name, frames_pil
+        return pixel_values, file_path.name, processed_frames
 
     def _read_frames(self, file_path: Path) -> List[np.ndarray]:
         """이미지 또는 비디오에서 프레임 추출"""
