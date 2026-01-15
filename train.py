@@ -132,28 +132,31 @@ def validate(model, dataloader, criterion, device):
     return loss_meter.avg, auc
 
 
+# DFDC 얼굴 크롭 데이터셋에 적합한 강력한 증강 설정
+hard_transform = A.Compose([
+    A.HorizontalFlip(p=0.5),
+    # 압축 손실: 딥페이크 탐지 모델이 저화질/압축된 환경에서도 잘 작동하게 함
+    A.ImageCompression(quality_lower=60, quality_upper=100, p=0.5),
+    # 블러/노이즈: 다양한 캡처 환경 시뮬레이션
+    A.OneOf([
+        A.GaussianBlur(blur_limit=(3, 7)),
+        A.GaussNoise(var_limit=(10.0, 50.0)),
+    ], p=0.3),
+    # 밝기/대비 및 기하학적 변환
+    A.RandomBrightnessContrast(p=0.5),
+    A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=15, p=0.3),
+])
+
+
 def main():
+    """3만 장 샘플링 및 GPU 학습 버전"""
     args = parse_args()
     config = load_config(args.config)
     set_seed(config['experiment']['seed'])
 
-    # 1. CPU 강제 설정 (테스트용)
-    device = torch.device('cpu') 
-    print(f"Device forced to: {device}")
-
-    # 2. 데이터 100장 샘플링 및 임시 CSV 생성
-    import pandas as pd
-    full_df = pd.read_csv(config['data']['train_csv'])
-    
-    # Label이 0(Real), 1(Fake)라고 가정 (데이터에 맞춰 확인해!)
-    df_real = full_df[full_df['label'] == 0].sample(n=min(50, len(full_df[full_df['label']==0])), random_state=42)
-    df_fake = full_df[full_df['label'] == 1].sample(n=min(50, len(full_df[full_df['label']==1])), random_state=42)
-    tiny_df = pd.concat([df_real, df_fake]).reset_index(drop=True)
-    
-    # 임시 CSV 저장 (DeepfakeDataset이 경로를 받으므로)
-    tiny_csv_path = 'config/tiny_train.csv'
-    tiny_df.to_csv(tiny_csv_path, index=False)
-    print(f"✅ Tiny Dataset 생성 완료 (100장): {tiny_csv_path}")
+    # 1. 디바이스 설정
+    device = get_device() 
+    print(f"🚀 학습 시작! 사용 디바이스: {device}")
 
     # 모델 초기화
     processor = ViTImageProcessor.from_pretrained(config['model']['name'])
@@ -163,52 +166,54 @@ def main():
         pretrained=config['model']['pretrained']
     ).to(device)
 
-    # 3. 샌니티 체크를 위해 모든 레이어 열기 (Unfreeze)
-    # 3에포크 기다리지 말고 지금 바로 다 학습 가능하게 만들어
-    for param in model.parameters():
-        param.requires_grad = True
-    print("🚀 All layers unfrozen for Sanity Check.")
+    # 2. 데이터 샘플링 (3만 장) - 사용자 요청에 따라 밸런싱 미수행
+    import pandas as pd
+    train_csv_path = config['data']['train_csv']
+    if os.path.exists(train_csv_path):
+        full_df = pd.read_csv(train_csv_path)
+        target_samples = 30000
+        
+        if len(full_df) > target_samples:
+            train_df = full_df.sample(n=target_samples, random_state=42).reset_index(drop=True)
+            print(f"📊 {len(full_df)}장 중 {target_samples}장 랜덤 샘플링 완료 (밸런싱 미수행)")
+        else:
+            train_df = full_df
+            print(f"📊 전체 데이터({len(full_df)}장)를 사용합니다.")
+        
+        # Dataset 클래스가 csv_path만 받으므로 임시 파일 저장
+        temp_train_csv = "temp_train_sampled.csv"
+        train_df.to_csv(temp_train_csv, index=False)
+        current_train_csv = temp_train_csv
+    else:
+        raise FileNotFoundError(f"⚠️ CSV 파일을 찾을 수 없습니다: {train_csv_path}")
 
-    # 1. 전처리 규칙 정의 (Resize + Normalize)
-    val_transform = A.Compose([
-        A.Resize(224, 224), # ViT 기본 입력 크기
-        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ToTensorV2()
-    ]) 
-    
-    # 데이터셋 준비 (샘플링한 CSV 경로 사용)
+    # 3. 데이터셋 및 로더
     train_dataset = DeepfakeDataset(
-        csv_path=tiny_csv_path, # 임시 CSV 사용
+        csv_path=current_train_csv,
         img_dir=config['data']['img_dir'],
         processor=processor,
         num_frames=config['data']['num_frames'],
-        transform=val_transform # 샌니티 체크는 증강 없이 깔끔하게 테스트!
+        transform=hard_transform
     )
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=4, # CPU니까 배치는 작게
-        shuffle=True
+        batch_size=config['training']['batch_size'],
+        shuffle=True,
+        num_workers=config['training']['num_workers'],
+        pin_memory=True if device == 'cuda' else False
     )
 
-    # main 함수 안, DataLoader 정의 직후에 넣어봐!
-    import os
-
-    # 데이터셋에서 샘플 하나만 꺼내서 경로 확인
-    sample_idx = 0
-    img_name = train_dataset.data_df.iloc[sample_idx]['filename'] # 'filename'은 네 CSV 컬럼명에 맞춰!
-    full_path = os.path.join(config['data']['img_dir'], img_name)
-
-    # 옵티마이저 (학습 반응을 보기 위해 LR을 조금 높게 설정)
-    optimizer = torch.optim.AdamW([
-        {'params': model.model.vit.parameters(), 'lr': 1e-4}, 
-        {'params': model.model.classifier.parameters(), 'lr': 1e-3}
+    # 4. 옵티마이저 및 스케줄러 (3만 장에 맞게 T_max 조절)
+    optimizer = optim.AdamW([
+        {'params': model.model.vit.parameters(), 'lr': 1e-5},
+        {'params': model.model.classifier.parameters(), 'lr': 5e-4}
     ], weight_decay=0.05)
-
-    # ⚠️ 네 코드에 scheduler가 주석처리 되어있어서 에러 날 수 있어!
-    # 테스트할 때는 아래 한 줄을 활성화하거나, 루프 안의 scheduler.step()을 주석처리해.
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
     
+    # 3만 장이면 1에폭에 스텝이 많지 않으니 T_max를 에폭 수에 맞춰
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config['training']['epochs'])
+
+
     # 학습 루프 (샌니티 체크는 10~20 에포크만 봐도 충분해)
     print("\n=== Start Sanity Check (100 Samples) ===")
     for epoch in range(20):

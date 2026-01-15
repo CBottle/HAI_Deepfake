@@ -8,17 +8,16 @@ experiment:
 
 # 모델 설정
 model:
-  name: "google/vit-base-patch16-224"
+  # name: "google/vit-base-patch16-224"
   # 또는 사전학습된 딥페이크 탐지 모델
-  # name: "prithivMLmods/Deep-Fake-Detector-v2-Model"
+  name: "prithivMLmods/Deep-Fake-Detector-v2-Model"
   num_classes: 2
   pretrained: true
 
 # 데이터 설정
 data:
-  # 1. 실제 이미지들이 몽땅 들어있는 폴더 경로
-  img_dir: "/content/train_data/combined_images"
-  
+  img_dir: "/content/train_data/combined_images" 
+
   # 2. 각 데이터셋의 정답지(CSV) 경로
   train_csv: "/content/train_data/GRAVEX_200K/train_labels.csv"
   val_csv: "/content/train_data/GRAVEX_200K/val_labels.csv"
