@@ -135,12 +135,12 @@ def validate(model, dataloader, criterion, device):
 # DFDC 얼굴 크롭 데이터셋에 적합한 강력한 증강 설정
 hard_transform = A.Compose([
     A.HorizontalFlip(p=0.5),
-    # 압축 손실: 딥페이크 탐지 모델이 저화질/압축된 환경에서도 잘 작동하게 함
-    A.ImageCompression(quality_lower=60, quality_upper=100, p=0.5),
+    # 압축 손실: 딥페이크 탐지 모델이 저화질/압축된 환경에서도 잘 작동하게 함 (최신 Albumentations 대응)
+    A.ImageCompression(quality_range=(60, 100), p=0.5),
     # 블러/노이즈: 다양한 캡처 환경 시뮬레이션
     A.OneOf([
         A.GaussianBlur(blur_limit=(3, 7)),
-        A.GaussNoise(var_limit=(10.0, 50.0)),
+        A.GaussNoise(p=0.5), # 기본값 사용 (var_limit 경고 해결)
     ], p=0.3),
     # 밝기/대비 및 기하학적 변환
     A.RandomBrightnessContrast(p=0.5),
@@ -149,7 +149,7 @@ hard_transform = A.Compose([
 
 
 def main():
-    """3만 장 샘플링 및 GPU 학습 버전"""
+    """3만 장 밸런스 샘플링 및 GPU 학습 버전"""
     args = parse_args()
     config = load_config(args.config)
     set_seed(config['experiment']['seed'])
@@ -166,34 +166,58 @@ def main():
         pretrained=config['model']['pretrained']
     ).to(device)
 
-    # 2. 데이터 샘플링 (3만 장) - 사용자 요청에 따라 밸런싱 미수행
+    # 2. 데이터 샘플링 (Real:Fake = 1:1 밸런싱)
     import pandas as pd
+    from sklearn.model_selection import train_test_split
+
     train_csv_path = config['data']['train_csv']
     if os.path.exists(train_csv_path):
         full_df = pd.read_csv(train_csv_path)
-        target_samples = 30000
         
-        if len(full_df) > target_samples:
-            train_df = full_df.sample(n=target_samples, random_state=42).reset_index(drop=True)
-            print(f"📊 {len(full_df)}장 중 {target_samples}장 랜덤 샘플링 완료 (밸런싱 미수행)")
-        else:
-            train_df = full_df
-            print(f"📊 전체 데이터({len(full_df)}장)를 사용합니다.")
+        # 클래스 분리
+        df_real = full_df[full_df['label'] == 0]
+        df_fake = full_df[full_df['label'] == 1]
         
-        # Dataset 클래스가 csv_path만 받으므로 임시 파일 저장
-        temp_train_csv = "temp_train_sampled.csv"
-        train_df.to_csv(temp_train_csv, index=False)
-        current_train_csv = temp_train_csv
+        target_per_class = 15000
+        
+        # 각 클래스에서 1.5만 장씩 샘플링
+        s_real = df_real.sample(n=min(target_per_class, len(df_real)), random_state=42)
+        s_fake = df_fake.sample(n=min(target_per_class, len(df_fake)), random_state=42)
+        
+        # 데이터 병합
+        balanced_df = pd.concat([s_real, s_fake]).sample(frac=1, random_state=42).reset_index(drop=True)
+        
+        # Train / Val 분리 (9:1)
+        train_df, val_df = train_test_split(balanced_df, test_size=0.1, random_state=42, stratify=balanced_df['label'])
+        
+        print(f"📊 데이터 준비 완료: 총 {len(balanced_df)}장")
+        print(f"   - 학습(Train): {len(train_df)}장")
+        print(f"   - 검증(Val):   {len(val_df)}장")
+        
+        # 임시 파일 저장 (Dataset 클래스 호환용)
+        train_df.to_csv("temp_train.csv", index=False)
+        val_df.to_csv("temp_val.csv", index=False)
     else:
         raise FileNotFoundError(f"⚠️ CSV 파일을 찾을 수 없습니다: {train_csv_path}")
 
     # 3. 데이터셋 및 로더
+    # 학습용: 강한 증강 적용
     train_dataset = DeepfakeDataset(
-        csv_path=current_train_csv,
+        csv_path="temp_train.csv",
         img_dir=config['data']['img_dir'],
         processor=processor,
         num_frames=config['data']['num_frames'],
         transform=hard_transform
+    )
+    
+    # 검증용: 기본 증강 (Resize/Normalize는 Processor가 처리하므로 None도 가능하지만, 필요시 약한 증강 추가 가능)
+    # 여기서는 Processor만 믿고 transform=None으로 설정 (ViTImageProcessor가 Resize/Normalize 담당)
+    val_dataset = DeepfakeDataset(
+        csv_path="temp_val.csv",
+        img_dir=config['data']['img_dir'],
+        processor=processor,
+        num_frames=config['data']['num_frames'],
+        transform=None 
     )
 
     train_loader = DataLoader(
@@ -203,31 +227,51 @@ def main():
         num_workers=config['training']['num_workers'],
         pin_memory=True if device == 'cuda' else False
     )
+    
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=config['training']['batch_size'],
+        shuffle=False,
+        num_workers=config['training']['num_workers'],
+        pin_memory=True if device == 'cuda' else False
+    )
 
-    # 4. 옵티마이저 및 스케줄러 (3만 장에 맞게 T_max 조절)
+    # 4. 옵티마이저 및 스케줄러
     optimizer = optim.AdamW([
         {'params': model.model.vit.parameters(), 'lr': 1e-5},
         {'params': model.model.classifier.parameters(), 'lr': 5e-4}
     ], weight_decay=0.05)
     
-    # 3만 장이면 1에폭에 스텝이 많지 않으니 T_max를 에폭 수에 맞춰
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config['training']['epochs'])
+    criterion = torch.nn.CrossEntropyLoss()
 
+    # 학습 루프
+    print(f"\n=== Start Training (Total Epochs: {config['training']['epochs']}) ===")
+    best_auc = 0.0
+    
+    for epoch in range(config['training']['epochs']):
+        # 1. 학습
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
+        
+        # 2. 검증
+        val_loss, val_auc = validate(model, val_loader, criterion, device)
+        
+        print(f"Epoch {epoch+1}/{config['training']['epochs']} | "
+              f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val AUC: {val_auc:.4f}")
+        
+        # 3. 체크포인트 저장
+        # (1) Latest 모델 (항상 저장)
+        save_path = os.path.join(config['training']['experiment']['output_dir'], 'latest_model.pt')
+        save_checkpoint(model, optimizer, epoch, val_auc, save_path)
+        
+        # (2) Best 모델 (AUC 갱신 시 저장)
+        if val_auc > best_auc:
+            best_auc = val_auc
+            best_save_path = os.path.join(config['training']['experiment']['output_dir'], 'best_model.pt')
+            shutil.copy2(save_path, best_save_path) # latest를 복사해서 best로 만듦
+            print(f"🏆 Best Model Updated! (AUC: {best_auc:.4f}) -> {best_save_path}")
 
-    # 학습 루프 (샌니티 체크는 10~20 에포크만 봐도 충분해)
-    print("\n=== Start Sanity Check (100 Samples) ===")
-    for epoch in range(20):
-        train_loss = train_epoch(model, train_loader, torch.nn.CrossEntropyLoss(), optimizer, device)
-        
-        # 100장에 대한 AUC 직접 계산해서 출력해보기
-        # (validate 함수를 tiny_loader에 대해 돌려도 돼)
-        _, tiny_auc = validate(model, train_loader, torch.nn.CrossEntropyLoss(), device)
-        
-        print(f"Epoch {epoch+1} - Loss: {train_loss:.4f}, AUC: {tiny_auc:.4f}")
-        
-        if tiny_auc > 0.95:
-            print("🎉 Success! 모델이 100장의 데이터를 학습하기 시작했어.")
-            break
+        scheduler.step()
 
 if __name__ == '__main__':
     main()
