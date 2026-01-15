@@ -198,36 +198,9 @@ class InferenceDataset(Dataset):
         return len(self.files)
 
     def _crop_face(self, image: np.ndarray) -> np.ndarray:
-        """OpenCV를 사용하여 얼굴을 찾아 크롭 (못 찾으면 원본 반환)"""
-        if self.face_cascade is None:
-            return image
+        """Face Crop 비활성화 (원본 이미지 반환)"""
+        return image
 
-        # Haarcascade는 흑백 이미지 필요
-        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        
-        # 얼굴 감지 (scaleFactor=1.1, minNeighbors=4)
-        faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
-        
-        if len(faces) == 0:
-            return image
-        
-        # 가장 큰 얼굴 선택 (w * h 기준)
-        x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
-        
-        # 여유 있게 자르기 (Margin 20%)
-        margin = 0.2
-        img_h, img_w, _ = image.shape
-        
-        x_m = max(0, int(x - w * margin))
-        y_m = max(0, int(y - h * margin))
-        w_m = min(img_w - x_m, int(w * (1 + 2 * margin)))
-        h_m = min(img_h - y_m, int(h * (1 + 2 * margin)))
-        
-        # 범위 체크
-        if w_m <= 0 or h_m <= 0:
-            return image
-            
-        return image[y_m:y_m+h_m, x_m:x_m+w_m]
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, str, List[Image.Image]]:
         """
