@@ -274,6 +274,12 @@ class InferenceDataset(Dataset):
         processed_frames = []
         for f in frames_rgb:
             cropped = self._crop_face(f)
+            
+            # [긴급 테스트] 색상 공간 반전 (RGB <-> BGR)
+            # 혹시 모델이 BGR로 학습되었거나, 전처리 과정에서 색상이 꼬였는지 확인용
+            # 만약 결과가 더 나빠지면 바로 롤백하겠습니다.
+            # cropped = cv2.cvtColor(cropped, cv2.COLOR_RGB2BGR) 
+            
             processed_frames.append(Image.fromarray(cropped))
 
         if processed_frames:
