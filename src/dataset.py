@@ -198,8 +198,38 @@ class InferenceDataset(Dataset):
         return len(self.files)
 
     def _crop_face(self, image: np.ndarray) -> np.ndarray:
-        """Face Crop 비활성화 (원본 이미지 반환)"""
-        return image
+        """OpenCV로 얼굴을 찾고, 못 찾으면 중앙을 크롭하여 배경 노이즈 제거"""
+        if self.face_cascade is None:
+            return image
+
+        img_h, img_w, _ = image.shape
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        
+        # 얼굴 감지 (민감도 조정)
+        faces = self.face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(40, 40))
+        
+        if len(faces) > 0:
+            # 가장 큰 얼굴 선택
+            x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+            
+            # 여유 있게 자르기 (Margin 25% - 학습 데이터와 유사하게)
+            margin = 0.25
+            x_m = max(0, int(x - w * margin))
+            y_m = max(0, int(y - h * margin))
+            w_m = min(img_w - x_m, int(w * (1 + 2 * margin)))
+            h_m = min(img_h - y_m, int(h * (1 + 2 * margin)))
+            
+            return image[y_m:y_m+h_m, x_m:x_m+w_m]
+        
+        # 얼굴을 못 찾은 경우: 중앙 70% 구역을 잘라냄 (배경 제거 효과)
+        else:
+            center_x, center_y = img_w // 2, img_h // 2
+            crop_w, crop_h = int(img_w * 0.7), int(img_h * 0.7)
+            
+            start_x = max(0, center_x - crop_w // 2)
+            start_y = max(0, center_y - crop_h // 2)
+            
+            return image[start_y:start_y+crop_h, start_x:start_x+crop_w]
 
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, str, List[Image.Image]]:
