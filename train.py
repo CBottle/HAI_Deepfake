@@ -249,6 +249,9 @@ def main():
     print(f"\n=== Start Training (Total Epochs: {config['training']['epochs']}) ===")
     best_auc = 0.0
     
+    # 체크포인트 저장 디렉토리
+    ckpt_dir = config['training']['experiment']['output_dir']
+    
     for epoch in range(config['training']['epochs']):
         # 1. 학습
         train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
@@ -259,17 +262,20 @@ def main():
         print(f"Epoch {epoch+1}/{config['training']['epochs']} | "
               f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val AUC: {val_auc:.4f}")
         
-        # 3. 체크포인트 저장
-        # (1) Latest 모델 (항상 저장)
-        save_path = os.path.join(config['training']['experiment']['output_dir'], 'latest_model.pt')
-        save_checkpoint(model, optimizer, epoch, val_auc, save_path)
-        
-        # (2) Best 모델 (AUC 갱신 시 저장)
-        if val_auc > best_auc:
+        # 3. 체크포인트 저장 (utils.py의 save_checkpoint 활용)
+        is_best = val_auc > best_auc
+        if is_best:
             best_auc = val_auc
-            best_save_path = os.path.join(config['training']['experiment']['output_dir'], 'best_model.pt')
-            shutil.copy2(save_path, best_save_path) # latest를 복사해서 best로 만듦
-            print(f"🏆 Best Model Updated! (AUC: {best_auc:.4f}) -> {best_save_path}")
+            print(f"🏆 Best AUC Updated: {best_auc:.4f}")
+        
+        save_checkpoint(
+            model, 
+            optimizer, 
+            epoch, 
+            val_auc, 
+            checkpoint_dir=ckpt_dir, 
+            is_best=is_best
+        )
 
         scheduler.step()
 
