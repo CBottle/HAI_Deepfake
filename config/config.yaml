@@ -2,15 +2,18 @@
 
 # 실험 설정
 experiment:
-  name: "vit-base-baseline"
+  name: "efficientnet-v2-m-baseline"
   seed: 42
   output_dir: "./output"
 
 # 모델 설정
 model:
   # name: "google/vit-base-patch16-224"
-  # 또는 사전학습된 딥페이크 탐지 모델
-  name: "prithivMLmods/Deep-Fake-Detector-v2-Model"
+  # name: "prithivMLmods/Deep-Fake-Detector-v2-Model"
+  
+  # EfficientNet-V2 Medium (ImageNet-21k Pretrained)
+  # 성능과 속도의 균형이 아주 좋음
+  name: "tf_efficientnetv2_m.in21k"
   num_classes: 2
   pretrained: true
 

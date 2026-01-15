@@ -132,24 +132,17 @@ def validate(model, dataloader, criterion, device):
     return loss_meter.avg, auc
 
 
-# DFDC 얼굴 크롭 데이터셋에 적합한 강력한 증강 설정
-hard_transform = A.Compose([
+# 학습 데이터를 위한 '순한 맛' 증강 설정 (Soft Augmentation)
+# 화질을 손상시키지 않고 형태의 다양성만 확보합니다.
+soft_transform = A.Compose([
     A.HorizontalFlip(p=0.5),
-    # 압축 손실: 딥페이크 탐지 모델이 저화질/압축된 환경에서도 잘 작동하게 함 (최신 Albumentations 대응)
-    A.ImageCompression(quality_range=(60, 100), p=0.5),
-    # 블러/노이즈: 다양한 캡처 환경 시뮬레이션
-    A.OneOf([
-        A.GaussianBlur(blur_limit=(3, 7)),
-        A.GaussNoise(p=0.5), # 기본값 사용 (var_limit 경고 해결)
-    ], p=0.3),
-    # 밝기/대비 및 기하학적 변환
-    A.RandomBrightnessContrast(p=0.5),
-    A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=15, p=0.3),
+    A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.05, rotate_limit=10, p=0.3),
+    A.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.1, p=0.2),
 ])
 
 
 def main():
-    """3만 장 밸런스 샘플링 및 GPU 학습 버전"""
+    """순한 맛 증강 버전 - 고득점 Fine-tuning용"""
     args = parse_args()
     config = load_config(args.config)
     set_seed(config['experiment']['seed'])
@@ -190,28 +183,25 @@ def main():
         # Train / Val 분리 (9:1)
         train_df, val_df = train_test_split(balanced_df, test_size=0.1, random_state=42, stratify=balanced_df['label'])
         
-        print(f"📊 데이터 준비 완료: 총 {len(balanced_df)}장")
+        print(f"📊 [순한맛] 데이터 준비 완료: 총 {len(balanced_df)}장")
         print(f"   - 학습(Train): {len(train_df)}장")
         print(f"   - 검증(Val):   {len(val_df)}장")
         
-        # 임시 파일 저장 (Dataset 클래스 호환용)
+        # 임시 파일 저장
         train_df.to_csv("temp_train.csv", index=False)
         val_df.to_csv("temp_val.csv", index=False)
     else:
         raise FileNotFoundError(f"⚠️ CSV 파일을 찾을 수 없습니다: {train_csv_path}")
 
     # 3. 데이터셋 및 로더
-    # 학습용: 강한 증강 적용
     train_dataset = DeepfakeDataset(
         csv_path="temp_train.csv",
         img_dir=config['data']['img_dir'],
         processor=processor,
         num_frames=config['data']['num_frames'],
-        transform=hard_transform
+        transform=soft_transform # 순한맛 적용
     )
     
-    # 검증용: 기본 증강 (Resize/Normalize는 Processor가 처리하므로 None도 가능하지만, 필요시 약한 증강 추가 가능)
-    # 여기서는 Processor만 믿고 transform=None으로 설정 (ViTImageProcessor가 Resize/Normalize 담당)
     val_dataset = DeepfakeDataset(
         csv_path="temp_val.csv",
         img_dir=config['data']['img_dir'],
@@ -236,11 +226,11 @@ def main():
         pin_memory=True if device == 'cuda' else False
     )
 
-    # 4. 옵티마이저 및 스케줄러
+    # 4. 옵티마이저 (Fine-tuning을 위해 Learning Rate 낮춤)
     optimizer = optim.AdamW([
-        {'params': model.model.vit.parameters(), 'lr': 1e-5},
-        {'params': model.model.classifier.parameters(), 'lr': 5e-4}
-    ], weight_decay=0.05)
+        {'params': model.model.vit.parameters(), 'lr': 5e-6}, # 아주 미세하게 조정
+        {'params': model.model.classifier.parameters(), 'lr': 5e-5}
+    ], weight_decay=0.01)
     
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config['training']['epochs'])
     criterion = torch.nn.CrossEntropyLoss()
@@ -256,14 +246,12 @@ def main():
             start_epoch = checkpoint['epoch'] + 1
             if 'val_auc' in checkpoint:
                 best_auc = checkpoint['val_auc']
-            print(f"   -> Resuming form Epoch {start_epoch+1}")
+            print(f"   -> Resuming from Epoch {start_epoch+1}")
         else:
             print(f"⚠️ Checkpoint not found: {args.resume}")
 
     # 학습 루프
-    print(f"\n=== Start Training (Total Epochs: {config['training']['epochs']}) ===")
-    
-    # 체크포인트 저장 디렉토리
+    print(f"\n=== Start Fine-tuning (Total Epochs: {config['training']['epochs']}) ===")
     ckpt_dir = config['training']['experiment']['output_dir']
     
     for epoch in range(start_epoch, config['training']['epochs']):
@@ -276,7 +264,7 @@ def main():
         print(f"Epoch {epoch+1}/{config['training']['epochs']} | "
               f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val AUC: {val_auc:.4f}")
         
-        # 3. 체크포인트 저장 (utils.py의 save_checkpoint 활용)
+        # 3. 체크포인트 저장
         is_best = val_auc > best_auc
         if is_best:
             best_auc = val_auc
