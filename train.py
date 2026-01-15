@@ -245,14 +245,28 @@ def main():
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config['training']['epochs'])
     criterion = torch.nn.CrossEntropyLoss()
 
+    # 체크포인트 로드 (Resume)
+    start_epoch = 0
+    best_auc = 0.0
+    
+    if args.resume:
+        if os.path.isfile(args.resume):
+            print(f"🔄 Resuming from checkpoint: {args.resume}")
+            checkpoint = load_checkpoint(args.resume, model, optimizer, device)
+            start_epoch = checkpoint['epoch'] + 1
+            if 'val_auc' in checkpoint:
+                best_auc = checkpoint['val_auc']
+            print(f"   -> Resuming form Epoch {start_epoch+1}")
+        else:
+            print(f"⚠️ Checkpoint not found: {args.resume}")
+
     # 학습 루프
     print(f"\n=== Start Training (Total Epochs: {config['training']['epochs']}) ===")
-    best_auc = 0.0
     
     # 체크포인트 저장 디렉토리
     ckpt_dir = config['training']['experiment']['output_dir']
     
-    for epoch in range(config['training']['epochs']):
+    for epoch in range(start_epoch, config['training']['epochs']):
         # 1. 학습
         train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
         
