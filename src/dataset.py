@@ -179,12 +179,13 @@ class InferenceDataset(Dataset):
 
         self.files = self._collect_files()
         
-        # MediaPipe Face Detection 초기화 (Local Import for Safety)
-        import mediapipe as mp
-        self.mp_face_detection = mp.solutions.face_detection.FaceDetection(
-            model_selection=1, # 0: 근거리(2m이내), 1: 원거리(2m이상/전신)
-            min_detection_confidence=0.5
-        )
+        # OpenCV Face Detector (Haarcascade) - MediaPipe 대체
+        # 별도 설치 없이 cv2 내장 기능 사용으로 에러 방지
+        try:
+            self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        except Exception as e:
+            print(f"Warning: Failed to load OpenCV Haarcascade: {e}")
+            self.face_cascade = None
 
     def _collect_files(self) -> List[Path]:
         """데이터 디렉토리에서 파일 목록 수집"""
@@ -197,31 +198,36 @@ class InferenceDataset(Dataset):
         return len(self.files)
 
     def _crop_face(self, image: np.ndarray) -> np.ndarray:
-        """MediaPipe를 사용하여 얼굴을 찾아 크롭 (못 찾으면 원본 반환)"""
-        results = self.mp_face_detection.process(image)
+        """OpenCV를 사용하여 얼굴을 찾아 크롭 (못 찾으면 원본 반환)"""
+        if self.face_cascade is None:
+            return image
+
+        # Haarcascade는 흑백 이미지 필요
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         
-        if not results.detections:
+        # 얼굴 감지 (scaleFactor=1.1, minNeighbors=4)
+        faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
+        
+        if len(faces) == 0:
             return image
         
-        # 가장 점수가 높은 얼굴 하나만 선택
-        best_detection = max(results.detections, key=lambda d: d.score[0])
-        bboxC = best_detection.location_data.relative_bounding_box
-        
-        h, w, _ = image.shape
-        x, y, w_box, h_box = int(bboxC.xmin * w), int(bboxC.ymin * h), int(bboxC.width * w), int(bboxC.height * h)
+        # 가장 큰 얼굴 선택 (w * h 기준)
+        x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
         
         # 여유 있게 자르기 (Margin 20%)
         margin = 0.2
-        x = max(0, x - int(w_box * margin))
-        y = max(0, y - int(h_box * margin))
-        w_box = min(w - x, int(w_box * (1 + 2 * margin)))
-        h_box = min(h - y, int(h_box * (1 + 2 * margin)))
+        img_h, img_w, _ = image.shape
         
-        # 유효하지 않은 크기면 원본 반환
-        if w_box <= 0 or h_box <= 0:
+        x_m = max(0, int(x - w * margin))
+        y_m = max(0, int(y - h * margin))
+        w_m = min(img_w - x_m, int(w * (1 + 2 * margin)))
+        h_m = min(img_h - y_m, int(h * (1 + 2 * margin)))
+        
+        # 범위 체크
+        if w_m <= 0 or h_m <= 0:
             return image
             
-        return image[y:y+h_box, x:x+w_box]
+        return image[y_m:y_m+h_m, x_m:x_m+w_m]
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, str, List[Image.Image]]:
         """
