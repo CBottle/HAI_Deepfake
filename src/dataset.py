@@ -230,9 +230,9 @@ class InferenceDataset(Dataset):
             h = y2 - y1
             face_size = max(w, h)
             
-            # 여유 마진 대폭 확대 (50% - 얼굴 크기의 1.5배 영역을 정사각형으로)
-            # 턱, 머리카락, 목 주변이 모두 포함되도록 함
-            margin_rate = 0.5 
+            # 여유 마진 축소 (10% - 얼굴이 화면에 꽉 차게)
+            # 학습 데이터(DFDC 등)는 보통 얼굴 위주로 타이트하게 잘려있음
+            margin_rate = 0.1
             square_len = int(face_size * (1 + 2 * margin_rate))
             
             # 정사각형 좌표 계산
@@ -245,7 +245,7 @@ class InferenceDataset(Dataset):
             y2_new = min(img_h, cy + half_len)
             
             # 유효성 검사
-            if x2_new - x1_new > 50 and y2_new - y1_new > 50:
+            if x2_new - x1_new > 30 and y2_new - y1_new > 30:
                 cropped = image[y1_new:y2_new, x1_new:x2_new]
                 return cropped.astype(np.uint8)
         
