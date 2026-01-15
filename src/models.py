@@ -54,12 +54,13 @@ class DeepfakeDetector(nn.Module):
         return outputs.logits
 
 
-def load_model(checkpoint_path: str, device: str = "cuda") -> DeepfakeDetector:
+def load_model(checkpoint_path: str, model_name: str = "google/vit-base-patch16-224", device: str = "cuda") -> DeepfakeDetector:
     """
     체크포인트에서 모델 로드
 
     Args:
         checkpoint_path: 체크포인트 파일 경로
+        model_name: 모델 이름 (config와 일치해야 함)
         device: 디바이스 (cuda/cpu)
 
     Returns:
@@ -67,8 +68,8 @@ def load_model(checkpoint_path: str, device: str = "cuda") -> DeepfakeDetector:
     """
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
-    # 모델 초기화
-    model = DeepfakeDetector()
+    # 모델 초기화 (전달받은 model_name 사용)
+    model = DeepfakeDetector(model_name=model_name)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.to(device)
     model.eval()

@@ -85,7 +85,7 @@ def main():
     if args.model:
         # 학습된 체크포인트에서 로드
         from src.models import load_model
-        model = load_model(args.model, device)
+        model = load_model(args.model, model_name, device)
         print(f"Loaded checkpoint: {args.model}")
     else:
         # 사전학습 모델 직접 로드
