@@ -16,7 +16,16 @@ from torch.utils.data import Dataset
 from transformers import ViTImageProcessor
 import random
 from pathlib import Path
+import torch
+import cv2
+import numpy as np
+from PIL import Image
 
+try:
+    from facenet_pytorch import MTCNN
+except ImportError:
+    print("Warning: facenet_pytorch not installed. Install with `pip install facenet-pytorch`")
+    MTCNN = None
 
 class DeepfakeDataset(Dataset):
     """
@@ -179,13 +188,14 @@ class InferenceDataset(Dataset):
 
         self.files = self._collect_files()
         
-        # OpenCV Face Detector (Haarcascade) - MediaPipe 대체
-        # 별도 설치 없이 cv2 내장 기능 사용으로 에러 방지
-        try:
-            self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        except Exception as e:
-            print(f"Warning: Failed to load OpenCV Haarcascade: {e}")
-            self.face_cascade = None
+        # MTCNN Face Detector (딥러닝 기반, 고품질 크롭)
+        if MTCNN is not None:
+            # GPU 사용 가능 시 GPU 할당
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            self.mtcnn = MTCNN(keep_all=True, device=device, margin=20, post_process=False)
+        else:
+            self.mtcnn = None
+            print("⚠️ MTCNN not available. Face cropping will be disabled.")
 
     def _collect_files(self) -> List[Path]:
         """데이터 디렉토리에서 파일 목록 수집"""
@@ -198,38 +208,44 @@ class InferenceDataset(Dataset):
         return len(self.files)
 
     def _crop_face(self, image: np.ndarray) -> np.ndarray:
-        """OpenCV로 얼굴을 찾고, 못 찾으면 중앙을 크롭하여 배경 노이즈 제거"""
-        if self.face_cascade is None:
+        """MTCNN으로 얼굴을 찾아 크롭 (못 찾으면 중앙 크롭)"""
+        if self.mtcnn is None:
             return image
 
-        img_h, img_w, _ = image.shape
-        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        
-        # 얼굴 감지 (민감도 조정)
-        faces = self.face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(40, 40))
-        
-        if len(faces) > 0:
-            # 가장 큰 얼굴 선택
-            x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+        # MTCNN은 PIL 이미지나 RGB numpy 배열을 받음
+        try:
+            # detect 함수는 (boxes, probs)를 반환
+            boxes, probs = self.mtcnn.detect(image)
+        except Exception:
+            # 에러 발생 시 원본 사용
+            boxes = None
+
+        if boxes is not None and len(boxes) > 0:
+            # 가장 큰 얼굴 선택 (면적 기준)
+            # boxes는 [x1, y1, x2, y2] 형식
+            best_box = max(boxes, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))
+            x1, y1, x2, y2 = map(int, best_box)
             
-            # 여유 있게 자르기 (Margin 25% - 학습 데이터와 유사하게)
-            margin = 0.25
-            x_m = max(0, int(x - w * margin))
-            y_m = max(0, int(y - h * margin))
-            w_m = min(img_w - x_m, int(w * (1 + 2 * margin)))
-            h_m = min(img_h - y_m, int(h * (1 + 2 * margin)))
+            # 좌표 보정 (이미지 범위 내)
+            h, w, _ = image.shape
+            x1 = max(0, x1)
+            y1 = max(0, y1)
+            x2 = min(w, x2)
+            y2 = min(h, y2)
             
-            return image[y_m:y_m+h_m, x_m:x_m+w_m]
+            # 유효성 검사
+            if x2 - x1 > 0 and y2 - y1 > 0:
+                return image[y1:y2, x1:x2]
         
         # 얼굴을 못 찾은 경우: 중앙 70% 구역을 잘라냄 (배경 제거 효과)
-        else:
-            center_x, center_y = img_w // 2, img_h // 2
-            crop_w, crop_h = int(img_w * 0.7), int(img_h * 0.7)
-            
-            start_x = max(0, center_x - crop_w // 2)
-            start_y = max(0, center_y - crop_h // 2)
-            
-            return image[start_y:start_y+crop_h, start_x:start_x+crop_w]
+        img_h, img_w, _ = image.shape
+        center_x, center_y = img_w // 2, img_h // 2
+        crop_w, crop_h = int(img_w * 0.7), int(img_h * 0.7)
+        
+        start_x = max(0, center_x - crop_w // 2)
+        start_y = max(0, center_y - crop_h // 2)
+        
+        return image[start_y:start_y+crop_h, start_x:start_x+crop_w]
 
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, str, List[Image.Image]]:
