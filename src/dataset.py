@@ -208,34 +208,45 @@ class InferenceDataset(Dataset):
         return len(self.files)
 
     def _crop_face(self, image: np.ndarray) -> np.ndarray:
-        """MTCNN으로 얼굴을 찾아 크롭 (못 찾으면 중앙 크롭)"""
+        """MTCNN으로 얼굴을 찾아 아주 여유로운 정사각형 크롭 (Loose Square Crop)"""
         if self.mtcnn is None:
             return image
 
-        # MTCNN은 PIL 이미지나 RGB numpy 배열을 받음
         try:
-            # detect 함수는 (boxes, probs)를 반환
             boxes, probs = self.mtcnn.detect(image)
         except Exception:
-            # 에러 발생 시 원본 사용
             boxes = None
 
         if boxes is not None and len(boxes) > 0:
-            # 가장 큰 얼굴 선택 (면적 기준)
-            # boxes는 [x1, y1, x2, y2] 형식
+            # 가장 큰 얼굴 선택
             best_box = max(boxes, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))
             x1, y1, x2, y2 = map(int, best_box)
             
-            # 좌표 보정 (이미지 범위 내)
-            h, w, _ = image.shape
-            x1 = max(0, x1)
-            y1 = max(0, y1)
-            x2 = min(w, x2)
-            y2 = min(h, y2)
+            # 얼굴 중심 계산
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            
+            # 얼굴의 크기 (가로, 세로 중 긴 쪽 기준)
+            w = x2 - x1
+            h = y2 - y1
+            face_size = max(w, h)
+            
+            # 여유 마진 대폭 확대 (50% - 얼굴 크기의 1.5배 영역을 정사각형으로)
+            # 턱, 머리카락, 목 주변이 모두 포함되도록 함
+            margin_rate = 0.5 
+            square_len = int(face_size * (1 + 2 * margin_rate))
+            
+            # 정사각형 좌표 계산
+            half_len = square_len // 2
+            img_h, img_w, _ = image.shape
+            
+            x1_new = max(0, cx - half_len)
+            y1_new = max(0, cy - half_len)
+            x2_new = min(img_w, cx + half_len)
+            y2_new = min(img_h, cy + half_len)
             
             # 유효성 검사
-            if x2 - x1 > 0 and y2 - y1 > 0:
-                cropped = image[y1:y2, x1:x2]
+            if x2_new - x1_new > 50 and y2_new - y1_new > 50:
+                cropped = image[y1_new:y2_new, x1_new:x2_new]
                 return cropped.astype(np.uint8)
         
         # 얼굴을 못 찾은 경우: 중앙 70% 구역을 잘라냄 (배경 제거 효과)
