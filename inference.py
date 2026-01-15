@@ -109,12 +109,21 @@ def main():
 
     # 추론
     results = {}
+    debug_dir = Path('submissions/debug_frames')
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    debug_count = 0
 
     print("Running inference...")
     for idx in tqdm(range(len(dataset)), desc="Processing"):
-        pixel_values, filename, frames = dataset[idx]
+        pixel_values, filename, processed_frames = dataset[idx] # processed_frames는 PIL 이미지 리스트
 
-        if len(frames) > 0:
+        # 디버깅용 이미지 저장 (최초 5개 샘플의 프레임들)
+        if debug_count < 5:
+            for i, frame in enumerate(processed_frames):
+                frame.save(debug_dir / f"debug_{filename}_f{i}.png")
+            debug_count += 1
+
+        if len(processed_frames) > 0:
             # 프레임별 추론
             probs = infer_batch(model, pixel_values, device)
             # 프레임 평균
