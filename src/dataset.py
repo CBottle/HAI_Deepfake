@@ -17,6 +17,7 @@ from transformers import ViTImageProcessor
 import random
 from pathlib import Path
 import mediapipe as mp
+from mediapipe.python.solutions import face_detection as mp_face
 
 
 class DeepfakeDataset(Dataset):
@@ -181,7 +182,7 @@ class InferenceDataset(Dataset):
         self.files = self._collect_files()
         
         # MediaPipe Face Detection 초기화
-        self.mp_face_detection = mp.solutions.face_detection.FaceDetection(
+        self.mp_face_detection = mp_face.FaceDetection(
             model_selection=1, # 0: 근거리(2m이내), 1: 원거리(2m이상/전신)
             min_detection_confidence=0.5
         )
