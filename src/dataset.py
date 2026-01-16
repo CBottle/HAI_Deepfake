@@ -240,6 +240,9 @@ class InferenceDataset(Dataset):
             files.extend(self.data_dir.glob(f"*{ext}"))
         return sorted(files)
 
+    def __len__(self) -> int:
+        return len(self.files)
+
     def _resize_with_padding(self, image: np.ndarray) -> np.ndarray:
         """비율 유지를 위한 패딩 리사이즈 (Letterbox)"""
         h, w = image.shape[:2]
