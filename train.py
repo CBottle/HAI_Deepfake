@@ -228,10 +228,8 @@ def main():
     )
 
     # 4. 옵티마이저 (Fine-tuning을 위해 Learning Rate 낮춤)
-    optimizer = optim.AdamW([
-        {'params': model.model.vit.parameters(), 'lr': 5e-6}, # 아주 미세하게 조정
-        {'params': model.model.classifier.parameters(), 'lr': 5e-5}
-    ], weight_decay=0.01)
+    # 모델 전체 파라미터에 대해 학습률 적용 (timm 모델 호환성 확보)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-5, weight_decay=0.01)
     
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config['training']['epochs'])
     criterion = torch.nn.CrossEntropyLoss()
