@@ -12,8 +12,8 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 import timm  # timm 라이브러리 추가
+from timm.data import resolve_data_config, create_transform # timm 전처리 도구
 from torch.utils.data import DataLoader
-from transformers import ViTImageProcessor
 from tqdm import tqdm
 
 from src.dataset import InferenceDataset
@@ -104,15 +104,17 @@ def main():
 
     model.eval()
 
-    # 프로세서 로드
-    # timm 모델을 쓰더라도 전처리는 ViT 표준(224x224, ImageNet Mean)을 따르므로 호환됨
-    processor = ViTImageProcessor.from_pretrained("google/vit-base-patch16-224")
+    # timm 모델에 최적화된 Transform 생성
+    # 모델의 학습 설정(data_config)을 읽어와서 자동으로 Resize, Normalize 등을 설정함
+    data_config = resolve_data_config(model.default_cfg, model=model)
+    transform = create_transform(**data_config)
+    print(f"Data Config: {data_config}")
 
     # 데이터셋 준비
     print(f"Loading test data from: {test_dir}")
     dataset = InferenceDataset(
         data_dir=str(test_dir),
-        processor=processor,
+        transform=transform,
         num_frames=config['data']['num_frames']
     )
 
