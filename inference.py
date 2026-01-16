@@ -11,8 +11,9 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
+import timm  # timm 라이브러리 추가
 from torch.utils.data import DataLoader
-from transformers import ViTForImageClassification, ViTImageProcessor
+from transformers import ViTImageProcessor
 from tqdm import tqdm
 
 from src.dataset import InferenceDataset
@@ -93,9 +94,13 @@ def main():
         model = load_model(args.model, model_name, device)
         print(f"Loaded checkpoint: {args.model}")
     else:
-        # 사전학습 모델 직접 로드
-        model = ViTForImageClassification.from_pretrained(model_name).to(device)
-        print(f"Loaded pretrained model: {model_name}")
+        # 사전학습 모델 직접 로드 (timm)
+        model = timm.create_model(
+            model_name,
+            pretrained=True,
+            num_classes=config['model']['num_classes']
+        ).to(device)
+        print(f"Loaded pretrained model (timm): {model_name}")
 
     model.eval()
 
