@@ -297,3 +297,72 @@ class InferenceDataset(Dataset):
             pixel_values = torch.zeros(1, 3, 224, 224)
 
         return pixel_values, file_path.name, processed_frames
+
+    def _read_frames(self, file_path: Path) -> List[np.ndarray]:
+        """이미지 또는 비디오에서 프레임 추출"""
+        ext = file_path.suffix.lower()
+
+        if ext in self.IMAGE_EXTS:
+            try:
+                img = Image.open(file_path).convert("RGB")
+                return [np.array(img)]
+            except Exception:
+                return []
+
+        if ext in self.VIDEO_EXTS:
+            return self._extract_video_frames(file_path)
+
+        return []
+
+    def _extract_video_frames(self, video_path: Path) -> List[np.ndarray]:
+        """비디오에서 얼굴이 가장 크게/잘 나온 프레임들을 선별하여 추출"""
+        cap = cv2.VideoCapture(str(video_path))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        if total_frames <= 0:
+            cap.release()
+            return []
+
+        candidates = []
+        stride = max(1, total_frames // 50)  # 전체에서 최대 50장 정도만 샘플링해서 검사
+
+        for i in range(0, total_frames, stride):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, i)
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            # 얼굴 크기 측정 (중요도 산정)
+            face_area = 0
+            if self.face_cascade is not None:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
+                if len(faces) > 0:
+                    max_face = max(faces, key=lambda f: f[2] * f[3])
+                    face_area = max_face[2] * max_face[3]
+            
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            candidates.append((frame_rgb, face_area))
+
+        cap.release()
+
+        # 얼굴 크기 내림차순 정렬 후 상위 N개 선택
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        
+        best_frames = []
+        for frame, area in candidates[:self.num_frames]:
+            best_frames.append(frame)
+            
+        # 부족하면 균등 샘플링으로 채움
+        if len(best_frames) < self.num_frames:
+            cap = cv2.VideoCapture(str(video_path))
+            missing_count = self.num_frames - len(best_frames)
+            indices = np.linspace(0, total_frames - 1, missing_count, dtype=int)
+            for idx in indices:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+                ret, frame = cap.read()
+                if ret:
+                    best_frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            cap.release()
+
+        return best_frames[:self.num_frames]
