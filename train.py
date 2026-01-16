@@ -227,11 +227,18 @@ def main():
         pin_memory=True if device == 'cuda' else False
     )
 
-    # 4. 옵티마이저 (Fine-tuning을 위해 Learning Rate 낮춤)
-    # 모델 전체 파라미터에 대해 학습률 적용 (timm 모델 호환성 확보)
-    optimizer = optim.AdamW(model.parameters(), lr=1e-5, weight_decay=0.01)
+    # 4. 옵티마이저 (초반 수렴 속도를 위해 LR 상향: 1e-5 -> 1e-4)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.01)
     
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config['training']['epochs'])
+    # 스케줄러: 웜업(Warmup) 후 코사인 어닐링
+    # 초반 1에포크 동안은 학습률을 서서히 올리고, 그 뒤로는 서서히 낮춤 (안정적 학습)
+    from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
+    
+    warmup_scheduler = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=len(train_loader))
+    cosine_scheduler = CosineAnnealingLR(optimizer, T_max=config['training']['epochs'] * len(train_loader))
+    
+    # 1에포크 웜업 후 나머지 기간 코사인 어닐링
+    scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[len(train_loader)])
     criterion = torch.nn.CrossEntropyLoss()
 
     # 체크포인트 로드 (Resume)
