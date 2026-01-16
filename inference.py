@@ -103,6 +103,14 @@ def main():
         print(f"Loaded pretrained model (timm): {model_name}")
 
     model.eval()
+    
+    # [중요] 라벨 맵 확인: 0이 무엇이고 1이 무엇인지 출력 (0.9 점프의 핵심 힌트)
+    if hasattr(model, 'config') and hasattr(model.config, 'id2label'):
+        print(f"Model Label Mapping (id2label): {model.config.id2label}")
+    elif hasattr(model, 'pretrained_cfg'):
+        print(f"Model Label Mapping (pretrained_cfg): {model.pretrained_cfg.get('label_names', 'Not Found')}")
+    else:
+        print("Model Label Mapping: Not explicitly found in config. Assuming [Real, Fake].")
 
     # timm 모델에 최적화된 Transform 생성
     # 모델의 학습 설정(data_config)을 읽어와서 자동으로 Resize, Normalize 등을 설정함
