@@ -112,40 +112,53 @@ def main():
 
     # 데이터셋 준비
     print(f"Loading test data from: {test_dir}")
+    # 추론 시에는 비디오 프레임을 여러 장(10장) 봐여 정확도가 오름
+    # config의 num_frames는 학습용(1장)이라 무시하고 10장으로 강제 설정
     dataset = InferenceDataset(
         data_dir=str(test_dir),
         transform=transform,
-        num_frames=config['data']['num_frames']
+        num_frames=10
     )
 
     print(f"Test data length: {len(dataset)}")
+    
+    # DataLoader를 이용한 배치 추론 (속도 향상 핵심)
+    # L40S GPU라면 batch_size 32~64도 거뜬함
+    inference_batch_size = 32
+    dataloader = DataLoader(
+        dataset, 
+        batch_size=inference_batch_size, 
+        shuffle=False, 
+        num_workers=2, # CPU 병렬 처리
+        pin_memory=True
+    )
 
     # 추론
     results = {}
-    debug_dir = Path('submissions/debug_frames')
-    debug_dir.mkdir(parents=True, exist_ok=True)
-    debug_count = 0
-
-    print("Running inference...")
-    for idx in tqdm(range(len(dataset)), desc="Processing"):
-        pixel_values, filename, processed_frames = dataset[idx] # processed_frames는 PIL 이미지 리스트
-
-        # 디버깅용 이미지 저장 (최초 5개 샘플의 프레임들)
-        if debug_count < 5:
-            for i, frame in enumerate(processed_frames):
-                frame.save(debug_dir / f"debug_{filename}_f{i}.png")
-            debug_count += 1
-
-        if len(processed_frames) > 0:
-            # 프레임별 추론
-            probs = infer_batch(model, pixel_values, device)
-            # 프레임 평균
-            final_prob = float(np.mean(probs))
-        else:
-            # 에러 시 0.0 (Real)
-            final_prob = 0.0
-
-        results[filename] = final_prob
+    print(f"Running inference (Batch Size: {inference_batch_size})...")
+    
+    with torch.no_grad():
+        for pixel_values, filenames, _ in tqdm(dataloader, desc="Processing"):
+            # pixel_values: (B, T, C, H, W) -> (B*T, C, H, W)로 펼침
+            b, t, c, h, w = pixel_values.shape
+            pixel_values = pixel_values.view(-1, c, h, w).to(device)
+            
+            # 모델 출력 처리
+            outputs = model(pixel_values)
+            if hasattr(outputs, 'logits'):
+                logits = outputs.logits
+            else:
+                logits = outputs
+            
+            # 확률 계산 (B*T, 2)
+            probs = F.softmax(logits, dim=1)[:, 1]
+            
+            # 다시 (B, T)로 묶어서 영상별 평균 계산
+            probs = probs.view(b, t)
+            avg_probs = probs.mean(dim=1).cpu().numpy()
+            
+            for filename, prob in zip(filenames, avg_probs):
+                results[filename] = float(prob)
 
     print(f"Inference completed. Processed: {len(results)} files")
 

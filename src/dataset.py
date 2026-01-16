@@ -315,7 +315,7 @@ class InferenceDataset(Dataset):
         return []
 
     def _extract_video_frames(self, video_path: Path) -> List[np.ndarray]:
-        """비디오에서 얼굴이 가장 크게/잘 나온 프레임들을 선별하여 추출"""
+        """속도 최적화: 제한된 횟수(15회)만 스캔하여 얼굴 프레임 선별"""
         cap = cv2.VideoCapture(str(video_path))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
@@ -324,20 +324,33 @@ class InferenceDataset(Dataset):
             return []
 
         candidates = []
-        stride = max(1, total_frames // 50)  # 전체에서 최대 50장 정도만 샘플링해서 검사
+        # 속도 제한: 전체 비디오에서 딱 15지점만 찍어서 검사 (시간 단축 핵심)
+        scan_points = np.linspace(0, total_frames - 1, 15, dtype=int)
 
-        for i in range(0, total_frames, stride):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, i)
+        if not hasattr(self, 'face_cascade') or self.face_cascade is None:
+            self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+
+        for idx in scan_points:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
             ret, frame = cap.read()
             if not ret:
-                break
+                continue
             
-            # 얼굴 크기 측정 (중요도 산정)
+            # 얼굴 크기 측정 (작은 해상도로 리사이즈 후 검사하면 더 빠름)
+            h, w = frame.shape[:2]
+            scale = min(1.0, 640 / w) # 가로 640px 정도로 줄여서 검출 속도 UP
+            if scale < 1.0:
+                small_frame = cv2.resize(frame, None, fx=scale, fy=scale)
+            else:
+                small_frame = frame
+                
+            gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
+            
             face_area = 0
             if self.face_cascade is not None:
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
                 if len(faces) > 0:
+                    # 가장 큰 얼굴 (원본 스케일로 환산할 필요 없이 상대적 크기만 보면 됨)
                     max_face = max(faces, key=lambda f: f[2] * f[3])
                     face_area = max_face[2] * max_face[3]
             
@@ -346,23 +359,16 @@ class InferenceDataset(Dataset):
 
         cap.release()
 
-        # 얼굴 크기 내림차순 정렬 후 상위 N개 선택
+        # 얼굴 크기순 정렬 -> 상위 N개 선택
         candidates.sort(key=lambda x: x[1], reverse=True)
         
         best_frames = []
         for frame, area in candidates[:self.num_frames]:
             best_frames.append(frame)
             
-        # 부족하면 균등 샘플링으로 채움
-        if len(best_frames) < self.num_frames:
-            cap = cv2.VideoCapture(str(video_path))
-            missing_count = self.num_frames - len(best_frames)
-            indices = np.linspace(0, total_frames - 1, missing_count, dtype=int)
-            for idx in indices:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
-                ret, frame = cap.read()
-                if ret:
-                    best_frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            cap.release()
+        # 만약 15번 찔러봤는데도 프레임이 부족하면? (매우 짧은 영상)
+        # 이미 뽑은 것 중에서 중복해서 채움 (다시 읽지 않음!)
+        while len(best_frames) < self.num_frames and len(best_frames) > 0:
+            best_frames.append(best_frames[0]) # 제일 좋은 거 복사
 
         return best_frames[:self.num_frames]
