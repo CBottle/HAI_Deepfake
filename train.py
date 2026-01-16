@@ -152,7 +152,8 @@ def main():
     print(f"🚀 학습 시작! 사용 디바이스: {device}")
 
     # 모델 초기화
-    processor = ViTImageProcessor.from_pretrained(config['model']['name'])
+    # Processor는 Hugging Face의 ViT용을 빌려 씀 (EfficientNet도 224x224 Normalize라 호환됨)
+    processor = ViTImageProcessor.from_pretrained("google/vit-base-patch16-224")
     model = DeepfakeDetector(
         model_name=config['model']['name'],
         num_classes=config['model']['num_classes'],

@@ -100,7 +100,8 @@ def main():
     model.eval()
 
     # 프로세서 로드
-    processor = ViTImageProcessor.from_pretrained(model_name)
+    # timm 모델을 쓰더라도 전처리는 ViT 표준(224x224, ImageNet Mean)을 따르므로 호환됨
+    processor = ViTImageProcessor.from_pretrained("google/vit-base-patch16-224")
 
     # 데이터셋 준비
     print(f"Loading test data from: {test_dir}")
