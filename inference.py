@@ -130,14 +130,14 @@ def main():
 
     print(f"Test data length: {len(dataset)}")
     
-    # DataLoader를 이용한 배치 추론 (A100 최적화)
-    # A100 (40GB/80GB) 기준 batch_size=32 ~ 64 권장
-    inference_batch_size = 32
+    # DataLoader를 이용한 배치 추론 (안정성 최우선 세팅)
+    # GPU 환경에 따라 batch_size 조절 (16은 대부분의 환경에서 안전함)
+    inference_batch_size = 16
     dataloader = DataLoader(
         dataset, 
         batch_size=inference_batch_size, 
         shuffle=False, 
-        num_workers=4, # A100 속도를 맞추기 위해 CPU 병렬 처리 강화
+        num_workers=0, # 멀티프로세싱 에러 방지를 위해 0으로 설정
         pin_memory=True
     )
 
