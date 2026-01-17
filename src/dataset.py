@@ -334,7 +334,9 @@ class InferenceDataset(Dataset):
         if ext in self.IMAGE_EXTS:
             try:
                 img = Image.open(file_path).convert("RGB")
-                return [np.array(img)]
+                frame = np.array(img)
+                # 이미지의 경우 배치를 맞추기 위해 num_frames만큼 복제
+                return [frame] * self.num_frames
             except Exception:
                 return []
 
