@@ -146,7 +146,7 @@ def main():
     print(f"Running inference (Batch Size: {inference_batch_size})...")
     
     with torch.no_grad():
-        for pixel_values, filenames, _ in tqdm(dataloader, desc="Processing"):
+        for pixel_values, filenames in tqdm(dataloader, desc="Processing"):
             # pixel_values: (B, T, C, H, W) -> (B*T, C, H, W)로 펼침
             b, t, c, h, w = pixel_values.shape
             pixel_values = pixel_values.view(-1, c, h, w).to(device)

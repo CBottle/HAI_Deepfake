@@ -325,7 +325,7 @@ class InferenceDataset(Dataset):
         else:
             pixel_values = torch.zeros(1, 3, 224, 224) # 기본값
 
-        return pixel_values, file_path.name, processed_frames
+        return pixel_values, file_path.name
 
     def _read_frames(self, file_path: Path) -> List[np.ndarray]:
         """이미지 또는 비디오에서 프레임 추출"""
