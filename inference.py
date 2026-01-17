@@ -130,20 +130,20 @@ def main():
 
     print(f"Test data length: {len(dataset)}")
     
-    # DataLoader를 이용한 배치 추론 (속도와 메모리 균형)
-    # Colab T4 GPU(16GB VRAM) 및 384x384 해상도 기준 batch_size=8 권장
-    inference_batch_size = 8
+    # DataLoader를 이용한 배치 추론 (A100 최적화)
+    # A100 (40GB/80GB) 기준 batch_size=32 ~ 64 권장
+    inference_batch_size = 32
     dataloader = DataLoader(
         dataset, 
         batch_size=inference_batch_size, 
         shuffle=False, 
-        num_workers=0, # 메모리 부족 및 NumPy 충돌 방지를 위해 0으로 설정
+        num_workers=4, # A100 속도를 맞추기 위해 CPU 병렬 처리 강화
         pin_memory=True
     )
 
     # 추론
     results = {}
-    print(f"Running inference (Batch Size: {inference_batch_size})...")
+    print(f"Running inference (Batch Size: {inference_batch_size}, AMP: On)...")
     
     with torch.no_grad():
         for pixel_values, filenames in tqdm(dataloader, desc="Processing"):
@@ -151,15 +151,16 @@ def main():
             b, t, c, h, w = pixel_values.shape
             pixel_values = pixel_values.view(-1, c, h, w).to(device)
             
-            # 모델 출력 처리
-            outputs = model(pixel_values)
-            if hasattr(outputs, 'logits'):
-                logits = outputs.logits
-            else:
-                logits = outputs
-            
-            # 확률 계산 (B*T, 2)
-            probs = F.softmax(logits, dim=1)[:, 1]
+            # AMP (Mixed Precision) 적용 - 속도 2배 향상
+            with torch.cuda.amp.autocast():
+                outputs = model(pixel_values)
+                if hasattr(outputs, 'logits'):
+                    logits = outputs.logits
+                else:
+                    logits = outputs
+                
+                # 확률 계산 (B*T, 2)
+                probs = F.softmax(logits, dim=1)[:, 1]
             
             # 다시 (B, T)로 묶어서 영상별 평균 계산
             probs = probs.view(b, t)
