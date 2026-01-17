@@ -130,15 +130,16 @@ def main():
 
     print(f"Test data length: {len(dataset)}")
     
-    # DataLoader를 이용한 배치 추론 (안정성 최우선 세팅)
-    # GPU 환경에 따라 batch_size 조절 (16은 대부분의 환경에서 안전함)
+    # DataLoader를 이용한 고성능 배치 추론 (A100 풀옵션)
+    # A100 세션의 넉넉한 CPU 코어(8~12개)를 활용하여 전처리 속도 극대화
     inference_batch_size = 16
     dataloader = DataLoader(
         dataset, 
         batch_size=inference_batch_size, 
         shuffle=False, 
-        num_workers=0, # 멀티프로세싱 에러 방지를 위해 0으로 설정
-        pin_memory=True
+        num_workers=4,        # 4명의 보조 프로세스가 병렬로 전처리
+        prefetch_factor=2,    # GPU가 연산하는 동안 2개 배치를 미리 준비
+        pin_memory=True       # GPU 전송 속도 가속
     )
 
     # 추론
