@@ -201,9 +201,11 @@ class DeepfakeDataset(Dataset):
         return best_frames[:self.num_frames]
 
 
+from retinaface import RetinaFace
+
 class InferenceDataset(Dataset):
     """
-    추론용 데이터셋 (레이블 없음)
+    추론용 데이터셋 (레이블 없음) - RetinaFace 적용 버전
 
     Args:
         data_dir: 데이터 디렉토리 경로
@@ -225,13 +227,6 @@ class InferenceDataset(Dataset):
         self.num_frames = num_frames
 
         self.files = self._collect_files()
-        
-        # OpenCV Face Detector (Best Frame Selection용)
-        try:
-            self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        except Exception as e:
-            print(f"Warning: Failed to load OpenCV Haarcascade: {e}")
-            self.face_cascade = None
 
     def _collect_files(self) -> List[Path]:
         """데이터 디렉토리에서 파일 목록 수집"""
@@ -243,22 +238,59 @@ class InferenceDataset(Dataset):
     def __len__(self) -> int:
         return len(self.files)
 
-    def _resize_with_padding(self, image: np.ndarray) -> np.ndarray:
-        """비율 유지를 위한 패딩 리사이즈 (Letterbox)"""
-        h, w = image.shape[:2]
-        longest = max(h, w)
+    def _crop_face_retina(self, image: np.ndarray) -> np.ndarray:
+        """RetinaFace를 이용한 정밀 얼굴 크롭 (실패 시 중앙 크롭)"""
+        # RetinaFace는 RGB 이미지를 기대함
+        try:
+            resp = RetinaFace.detect_faces(image)
+        except Exception:
+            resp = None
         
-        # 정사각형 캔버스 (검은색)
-        canvas = np.zeros((longest, longest, 3), dtype=np.uint8)
+        if not resp or not isinstance(resp, dict):
+            # 얼굴 못 찾으면 중앙 70% 크롭 (Fallback)
+            h, w = image.shape[:2]
+            center_x, center_y = w // 2, h // 2
+            crop_w, crop_h = int(w * 0.7), int(h * 0.7)
+            start_x = max(0, center_x - crop_w // 2)
+            start_y = max(0, center_y - crop_h // 2)
+            return image[start_y:start_y+crop_h, start_x:start_x+crop_w]
+
+        # 가장 큰 얼굴 찾기 (면적 기준)
+        max_area = 0
+        best_face = None
         
-        # 중앙 배치 계산
-        top = (longest - h) // 2
-        left = (longest - w) // 2
+        for key in resp:
+            face = resp[key]
+            area = (face['facial_area'][2] - face['facial_area'][0]) * (face['facial_area'][3] - face['facial_area'][1])
+            if area > max_area:
+                max_area = area
+                best_face = face['facial_area']
         
-        # 이미지 붙여넣기
-        canvas[top:top+h, left:left+w] = image
+        x1, y1, x2, y2 = best_face
         
-        return canvas
+        # 여유 마진 10% (얼굴 위주로 타이트하게 자름)
+        w_face, h_face = x2 - x1, y2 - y1
+        margin = 0.1 # <--- 10%로 축소
+        x1 = max(0, int(x1 - w_face * margin))
+        y1 = max(0, int(y1 - h_face * margin))
+        x2 = min(image.shape[1], int(x2 + w_face * margin))
+        y2 = min(image.shape[0], int(y2 + h_face * margin))
+        
+        # 정사각형 만들기 (Square Crop)
+        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+        max_len = max(x2 - x1, y2 - y1)
+        half_len = max_len // 2
+        
+        x1_new = max(0, cx - half_len)
+        y1_new = max(0, cy - half_len)
+        x2_new = min(image.shape[1], cx + half_len)
+        y2_new = min(image.shape[0], cy + half_len)
+        
+        # 유효성 검사 (너무 작으면 원본 반환)
+        if x2_new - x1_new > 20 and y2_new - y1_new > 20:
+             return image[y1_new:y2_new, x1_new:x2_new]
+        
+        return image
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, str, List[Image.Image]]:
         """
@@ -270,31 +302,28 @@ class InferenceDataset(Dataset):
         file_path = self.files[idx]
         frames_rgb = self._read_frames(file_path)
 
-        # 패딩 리사이즈 및 Transform 적용
+        # RetinaFace 크롭 및 Transform 적용
         pixel_values_list = []
-        processed_frames = [] # 디버깅용 저장 (PIL Image)
+        processed_frames = [] # 디버깅용 저장
         
         for f in frames_rgb:
-            # 1. 패딩 리사이즈 (Square)
-            padded = self._resize_with_padding(f)
-            img_pil = Image.fromarray(padded)
+            # RetinaFace로 크롭!
+            cropped = self._crop_face_retina(f)
+            img_pil = Image.fromarray(cropped)
             processed_frames.append(img_pil)
             
-            # 2. Transform 적용 (Resize -> Tensor -> Normalize)
+            # Transform 적용
             if self.transform:
                 tensor = self.transform(img_pil)
                 pixel_values_list.append(tensor)
             else:
-                # Transform 없으면 기본 Tensor 변환 (비추천)
                 from torchvision.transforms.functional import to_tensor
                 pixel_values_list.append(to_tensor(img_pil))
 
         if pixel_values_list:
-            # (Batch, C, H, W) 형태로 스택
             pixel_values = torch.stack(pixel_values_list)
         else:
-            # 빈 텐서 (에러 방지용)
-            pixel_values = torch.zeros(1, 3, 224, 224)
+            pixel_values = torch.zeros(1, 3, 224, 224) # 기본값
 
         return pixel_values, file_path.name, processed_frames
 
@@ -315,7 +344,7 @@ class InferenceDataset(Dataset):
         return []
 
     def _extract_video_frames(self, video_path: Path) -> List[np.ndarray]:
-        """속도 최적화: 제한된 횟수(15회)만 스캔하여 얼굴 프레임 선별"""
+        """비디오에서 얼굴이 가장 크게/잘 나온 프레임들을 선별하여 추출"""
         cap = cv2.VideoCapture(str(video_path))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
@@ -324,11 +353,8 @@ class InferenceDataset(Dataset):
             return []
 
         candidates = []
-        # 속도 제한: 전체 비디오에서 딱 15지점만 찍어서 검사 (시간 단축 핵심)
+        # 속도 최적화: 15프레임만 스캔
         scan_points = np.linspace(0, total_frames - 1, 15, dtype=int)
-
-        if not hasattr(self, 'face_cascade') or self.face_cascade is None:
-            self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
         for idx in scan_points:
             cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
@@ -336,25 +362,30 @@ class InferenceDataset(Dataset):
             if not ret:
                 continue
             
-            # 얼굴 크기 측정 (작은 해상도로 리사이즈 후 검사하면 더 빠름)
+            # RetinaFace 속도 향상을 위해 리사이즈 후 검사
             h, w = frame.shape[:2]
-            scale = min(1.0, 640 / w) # 가로 640px 정도로 줄여서 검출 속도 UP
+            scale = min(1.0, 640 / w)
             if scale < 1.0:
                 small_frame = cv2.resize(frame, None, fx=scale, fy=scale)
             else:
                 small_frame = frame
-                
-            gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
-            
-            face_area = 0
-            if self.face_cascade is not None:
-                faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
-                if len(faces) > 0:
-                    # 가장 큰 얼굴 (원본 스케일로 환산할 필요 없이 상대적 크기만 보면 됨)
-                    max_face = max(faces, key=lambda f: f[2] * f[3])
-                    face_area = max_face[2] * max_face[3]
             
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            small_rgb = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+            
+            # 얼굴 크기 측정
+            face_area = 0
+            try:
+                resp = RetinaFace.detect_faces(small_rgb)
+                if resp and isinstance(resp, dict):
+                    for key in resp:
+                        face = resp[key]
+                        area = (face['facial_area'][2] - face['facial_area'][0]) * (face['facial_area'][3] - face['facial_area'][1])
+                        if area > face_area:
+                            face_area = area
+            except:
+                pass
+            
             candidates.append((frame_rgb, face_area))
 
         cap.release()
@@ -366,9 +397,8 @@ class InferenceDataset(Dataset):
         for frame, area in candidates[:self.num_frames]:
             best_frames.append(frame)
             
-        # 만약 15번 찔러봤는데도 프레임이 부족하면? (매우 짧은 영상)
-        # 이미 뽑은 것 중에서 중복해서 채움 (다시 읽지 않음!)
+        # 부족하면 채우기
         while len(best_frames) < self.num_frames and len(best_frames) > 0:
-            best_frames.append(best_frames[0]) # 제일 좋은 거 복사
+            best_frames.append(best_frames[0])
 
         return best_frames[:self.num_frames]

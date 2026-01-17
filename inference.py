@@ -120,12 +120,12 @@ def main():
 
     # 데이터셋 준비
     print(f"Loading test data from: {test_dir}")
-    # 추론 시에는 비디오 프레임을 여러 장(10장) 봐여 정확도가 오름
-    # config의 num_frames는 학습용(1장)이라 무시하고 10장으로 강제 설정
+    # 추론 시에는 비디오 프레임을 여러 장(30장) 봐여 정확도가 오름
+    # 1시간 제한 내에서 최대한 정밀하게 검사하기 위해 30장으로 설정
     dataset = InferenceDataset(
         data_dir=str(test_dir),
         transform=transform,
-        num_frames=10
+        num_frames=30
     )
 
     print(f"Test data length: {len(dataset)}")
