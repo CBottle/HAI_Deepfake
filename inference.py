@@ -130,14 +130,14 @@ def main():
 
     print(f"Test data length: {len(dataset)}")
     
-    # DataLoader를 이용한 배치 추론 (속도 향상 핵심)
-    # L40S GPU라면 batch_size 32~64도 거뜬함
-    inference_batch_size = 32
+    # DataLoader를 이용한 배치 추론 (속도와 메모리 균형)
+    # Colab T4 GPU(16GB VRAM) 및 384x384 해상도 기준 batch_size=8 권장
+    inference_batch_size = 8
     dataloader = DataLoader(
         dataset, 
         batch_size=inference_batch_size, 
         shuffle=False, 
-        num_workers=2, # CPU 병렬 처리
+        num_workers=0, # 메모리 부족 및 NumPy 충돌 방지를 위해 0으로 설정
         pin_memory=True
     )
 
