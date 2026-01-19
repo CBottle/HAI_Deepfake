@@ -171,7 +171,7 @@ def main():
 
     # 2. 데이터 샘플링 (Real:Fake = 1:1 밸런싱)
     import pandas as pd
-    from sklearn.model_selection import train_test_split
+    from sklearn.model_selection import GroupShuffleSplit # 그룹 스플릿 추가
 
     train_csv_path = config['data']['train_csv']
     if os.path.exists(train_csv_path):
@@ -188,14 +188,22 @@ def main():
         s_fake = df_fake.sample(n=min(target_per_class, len(df_fake)), random_state=42)
         
         # 데이터 병합
-        balanced_df = pd.concat([s_real, s_fake]).sample(frac=1, random_state=42).reset_index(drop=True)
+        balanced_df = pd.concat([s_real, s_fake]).reset_index(drop=True)
         
-        # Train / Val 분리 (9:1)
-        train_df, val_df = train_test_split(balanced_df, test_size=0.1, random_state=42, stratify=balanced_df['label'])
+        # [Data Leakage 방지] 비디오 ID 추출 및 그룹 스플릿
+        # 파일명 예시: 'video_01_frame0.jpg', 'aomwayen.mp4_frame10.jpg'
+        # 전략: 뒤에서 첫 번째 '_' 기준 앞부분을 비디오 ID로 간주
+        balanced_df['video_id'] = balanced_df['filename'].apply(lambda x: x.rsplit('_', 1)[0] if '_' in x else x)
         
-        print(f"📊 [순한맛] 데이터 준비 완료: 총 {len(balanced_df)}장")
-        print(f"   - 학습(Train): {len(train_df)}장")
-        print(f"   - 검증(Val):   {len(val_df)}장")
+        gss = GroupShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
+        train_idx, val_idx = next(gss.split(balanced_df, groups=balanced_df['video_id']))
+        
+        train_df = balanced_df.iloc[train_idx]
+        val_df = balanced_df.iloc[val_idx]
+        
+        print(f"📊 [그룹 스플릿] 데이터 준비 완료: 총 {len(balanced_df)}장")
+        print(f"   - 학습(Train): {len(train_df)}장 (Videos: {train_df['video_id'].nunique()})")
+        print(f"   - 검증(Val):   {len(val_df)}장 (Videos: {val_df['video_id'].nunique()})")
         
         # 임시 파일 저장
         train_df.to_csv("temp_train.csv", index=False)
@@ -238,13 +246,29 @@ def main():
 
     # [Training Stage Selection]
     if args.unfreeze:
-        # [Stage 2: Full Fine-tuning]
-        print("🔓 [Stage 2] Unfreezing All Layers for Fine-tuning...")
+        # [Stage 2: Full Fine-tuning with Differential LR]
+        print("🔓 [Stage 2] Unfreezing All Layers with Differential LR...")
         for param in model.parameters():
             param.requires_grad = True
             
-        # 전체 미세 조정을 위해 낮은 LR 사용
-        optimizer = optim.AdamW(model.parameters(), lr=1e-5, weight_decay=0.01)
+        # 파라미터 그룹 분리 (Backbone vs Head)
+        backbone_params = []
+        head_params = []
+        
+        # Head 이름 찾기 (timm 호환)
+        head_name = 'classifier' if hasattr(model.model, 'classifier') else 'fc' if hasattr(model.model, 'fc') else 'head'
+        
+        for name, param in model.named_parameters():
+            if head_name in name:
+                head_params.append(param)
+            else:
+                backbone_params.append(param)
+        
+        # 차등 학습률 적용
+        optimizer = optim.AdamW([
+            {'params': backbone_params, 'lr': 1e-6}, # 몸통: 지식 보존 (아주 살살)
+            {'params': head_params, 'lr': 1e-4}      # 머리: 빠른 적응
+        ], weight_decay=0.01)
     else:
         # [Stage 1: SRM Warmup]
         print("🔒 [Stage 1] Freezing Backbone Body for SRM Adaptation...")
