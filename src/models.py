@@ -77,8 +77,9 @@ class DeepfakeDetector(nn.Module):
     ):
         super().__init__()
 
-        # SRM 필터 레이어
+        # SRM 필터 레이어 및 정규화(BatchNorm)
         self.srm_layer = SRMConv2d()
+        self.srm_bn = nn.BatchNorm2d(3) # SRM 출력값을 안정화시키기 위해 추가
         
         # 정규화 해제(Un-normalize)를 위한 값 설정 (ImageNet 기준)
         self.register_buffer('mean', torch.tensor([0.5, 0.5, 0.5]).view(1, 3, 1, 1))
@@ -118,8 +119,9 @@ class DeepfakeDetector(nn.Module):
             unnorm_x = x * self.std + self.mean
             unnorm_x = torch.clamp(unnorm_x, 0, 1)
         
-        # 2. SRM 특징 추출
+        # 2. SRM 특징 추출 및 안정화
         srm_x = self.srm_layer(unnorm_x) # (Batch, 3, H, W)
+        srm_x = self.srm_bn(srm_x)       # BatchNorm 적용으로 스케일 통제
         
         # 3. Early Fusion (Channel Concatenation)
         # 원본 RGB(정규화됨)와 SRM 노이즈를 합침
