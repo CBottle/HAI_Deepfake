@@ -42,6 +42,8 @@ def parse_args():
                         help='Path to checkpoint to resume from')
     parser.add_argument('--debug', action='store_true',
                         help='Debug mode (small dataset)')
+    parser.add_argument('--unfreeze', action='store_true',
+                        help='Stage 2: Unfreeze backbone for full fine-tuning')
     return parser.parse_args()
 
 def train_epoch(model, dataloader, criterion, optimizer, device, scaler=None):
@@ -234,36 +236,36 @@ def main():
         pin_memory=True if device == 'cuda' else False
     )
 
-    # [Stage 1: Partial Freeze Strategy]
-    # 단일 백본 모델이지만, 6채널 입력 적응을 위해 첫 레이어(conv_stem)와 마지막 분류기만 학습
-    # 나머지 몸통(Blocks)은 RGB 지식을 보존하기 위해 Freeze
-    print("🔒 Freezing Backbone Body for Stage 1 Adaptation...")
-    
-    # 1. 전체 백본 Freeze
-    for param in model.model.parameters():
-        param.requires_grad = False
+    # [Training Stage Selection]
+    if args.unfreeze:
+        # [Stage 2: Full Fine-tuning]
+        print("🔓 [Stage 2] Unfreezing All Layers for Fine-tuning...")
+        for param in model.parameters():
+            param.requires_grad = True
+            
+        # 전체 미세 조정을 위해 낮은 LR 사용
+        optimizer = optim.AdamW(model.parameters(), lr=1e-5, weight_decay=0.01)
+    else:
+        # [Stage 1: SRM Warmup]
+        print("🔒 [Stage 1] Freezing Backbone Body for SRM Adaptation...")
         
-    # 2. 첫 번째 레이어 (conv_stem) Unfreeze -> 6채널 적응
-    for param in model.model.conv_stem.parameters():
-        param.requires_grad = True
-        
-    # 3. 분류기 (classifier) Unfreeze -> 정답 학습
-    # timm 모델마다 head 이름이 다를 수 있으므로 안전하게 처리
-    if hasattr(model.model, 'classifier'):
-        for param in model.model.classifier.parameters():
+        # 1. 전체 백본 Freeze
+        for param in model.model.parameters():
+            param.requires_grad = False
+            
+        # 2. 첫 번째 레이어 (conv_stem) Unfreeze
+        for param in model.model.conv_stem.parameters():
             param.requires_grad = True
-    elif hasattr(model.model, 'fc'): # ResNet 계열 등
-        for param in model.model.fc.parameters():
-            param.requires_grad = True
-    elif hasattr(model.model, 'head'): # ViT 등
-        for param in model.model.head.parameters():
-            param.requires_grad = True
+            
+        # 3. 분류기 (classifier) Unfreeze
+        head = getattr(model.model, 'classifier', getattr(model.model, 'fc', getattr(model.model, 'head', None)))
+        if head:
+            for param in head.parameters():
+                param.requires_grad = True
 
-    # 학습할 파라미터만 골라서 Optimizer에 전달
-    trainable_params = [p for p in model.parameters() if p.requires_grad]
-    
-    # 4. 옵티마이저 (6채널 적응을 위해 전체 학습 -> 부분 학습으로 변경)
-    optimizer = optim.AdamW(trainable_params, lr=1e-3, weight_decay=0.01) # 초기 적응이라 LR 좀 높게
+        # 학습할 파라미터만 골라서 Optimizer에 전달 (높은 LR)
+        trainable_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = optim.AdamW(trainable_params, lr=1e-3, weight_decay=0.01)
     
     # 스케줄러: 웜업(Warmup) 후 코사인 어닐링
     from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
