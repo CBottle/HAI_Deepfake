@@ -100,10 +100,14 @@ class DeepfakeDetector(nn.Module):
             old_weight = temp_model.conv_stem.weight.data # (out_ch, 3, k, k)
             
             # 6채널 모델의 가중치에 이식
-            # [0:3] 채널: 기존 RGB 지식 그대로 복사
-            self.model.conv_stem.weight.data[:, 0:3, :, :].copy_(old_weight)
-            # [3:6] 채널: 기존 지식으로 초기화 (학습 속도 향상)
-            self.model.conv_stem.weight.data[:, 3:6, :, :].copy_(old_weight)
+            # 입력 채널이 2배(3->6)가 되었으므로, 가중치 크기를 절반(0.5)으로 줄여서
+            # 초기 Activation 값의 총량(Energy)을 보존함. (Loss 폭발 방지)
+            scale_factor = 0.5
+            
+            # [0:3] 채널: 기존 RGB 지식 * 0.5
+            self.model.conv_stem.weight.data[:, 0:3, :, :].copy_(old_weight * scale_factor)
+            # [3:6] 채널: SRM 지식(초기화) * 0.5
+            self.model.conv_stem.weight.data[:, 3:6, :, :].copy_(old_weight * scale_factor)
             
             del temp_model # 메모리 절약
 
