@@ -64,9 +64,10 @@ class SRMConv2d(nn.Module):
         return out
 
 
-class DualStreamDetector(nn.Module):
+class DeepfakeDetector(nn.Module):
     """
-    RGB Stream + SRM Stream 듀얼 구조 모델
+    단일 백본 SRM Early Fusion 모델 (Weight Surgery 적용)
+    RGB(3ch) + SRM(3ch) = 6채널 입력을 받는 단일 EfficientNet 모델
     """
     def __init__(
         self,
@@ -76,73 +77,63 @@ class DualStreamDetector(nn.Module):
     ):
         super().__init__()
 
-        # Stream 1: RGB (기존 모델)
-        # num_classes=0으로 설정하여 Classification Head 없이 Feature만 뽑음
-        self.rgb_stream = timm.create_model(
+        # SRM 필터 레이어
+        self.srm_layer = SRMConv2d()
+        
+        # 정규화 해제(Un-normalize)를 위한 값 설정 (ImageNet 기준)
+        self.register_buffer('mean', torch.tensor([0.5, 0.5, 0.5]).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.5, 0.5, 0.5]).view(1, 3, 1, 1))
+
+        # 1. 단일 백본 생성 (6채널)
+        self.model = timm.create_model(
             model_name,
             pretrained=pretrained,
-            num_classes=0 
-        )
-        
-        # Stream 2: SRM (노이즈 분석용 가벼운 모델)
-        self.srm_layer = SRMConv2d()
-        self.srm_stream = timm.create_model(
-            'efficientnet_b0', # 가볍고 빠른 모델 사용
-            pretrained=True,
-            num_classes=0,
-            in_chans=3 # SRM 출력(3채널)을 받음
-        )
-        
-        # Feature Dimension 계산
-        # EfficientNetV2-M: 1280, EfficientNet-B0: 1280 -> Total 2560
-        rgb_dim = self.rgb_stream.num_features
-        srm_dim = self.srm_stream.num_features
-        concat_dim = rgb_dim + srm_dim
-        
-        # Fusion Head (MLP)
-        self.classifier = nn.Sequential(
-            nn.Linear(concat_dim, 512),
-            nn.BatchNorm1d(512),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(512, num_classes)
+            num_classes=num_classes,
+            in_chans=6
         )
 
+        # 2. 첫 번째 Conv 레이어 가중치 이식 (Weight Surgery)
+        if pretrained:
+            print(f"💉 Performing Weight Surgery on {model_name} conv_stem...")
+            # 순정 3채널 모델에서 가중치 추출
+            temp_model = timm.create_model(model_name, pretrained=True, num_classes=0)
+            old_weight = temp_model.conv_stem.weight.data # (out_ch, 3, k, k)
+            
+            # 6채널 모델의 가중치에 이식
+            # [0:3] 채널: 기존 RGB 지식 그대로 복사
+            self.model.conv_stem.weight.data[:, 0:3, :, :].copy_(old_weight)
+            # [3:6] 채널: 기존 지식으로 초기화 (학습 속도 향상)
+            self.model.conv_stem.weight.data[:, 3:6, :, :].copy_(old_weight)
+            
+            del temp_model # 메모리 절약
+
     def forward(self, x):
-        # Stream 1: RGB
-        rgb_feat = self.rgb_stream(x) # (Batch, 1280)
+        # 1. SRM을 위한 정규화 해제 (SRM은 [0, 1] 또는 [0, 255] 데이터를 선호함)
+        # x는 현재 [-1, 1] 또는 정규화된 상태
+        with torch.no_grad():
+            unnorm_x = x * self.std + self.mean
+            unnorm_x = torch.clamp(unnorm_x, 0, 1)
         
-        # Stream 2: SRM
-        srm_x = self.srm_layer(x)     # (Batch, 3, H, W)
-        srm_feat = self.srm_stream(srm_x) # (Batch, 1280)
+        # 2. SRM 특징 추출
+        srm_x = self.srm_layer(unnorm_x) # (Batch, 3, H, W)
         
-        # Fusion
-        combined = torch.cat([rgb_feat, srm_feat], dim=1) # (Batch, 2560)
-        logits = self.classifier(combined)
+        # 3. Early Fusion (Channel Concatenation)
+        # 원본 RGB(정규화됨)와 SRM 노이즈를 합침
+        combined = torch.cat([x, srm_x], dim=1) # (Batch, 6, H, W)
         
+        # 4. 백본 통과
+        logits = self.model(combined)
         return logits
 
 
-# 기존 호환성을 위해 클래스명 유지 (내부적으로 DualStream 사용)
-DeepfakeDetector = DualStreamDetector
-
-
-def load_model(checkpoint_path: str, model_name: str = "tf_efficientnetv2_m.in21k", device: str = "cuda") -> DualStreamDetector:
+def load_model(checkpoint_path: str, model_name: str = "tf_efficientnetv2_m.in21k", device: str = "cuda") -> DeepfakeDetector:
     """
-    체크포인트에서 DualStreamDetector 모델 로드
+    체크포인트에서 DeepfakeDetector 모델 로드
     """
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
-    model = DualStreamDetector(model_name=model_name)
-    
-    # 가중치 키 매핑 (혹시 모를 불일치 대비)
-    state_dict = checkpoint['model_state_dict']
-    
-    # 만약 기존 단일 모델 체크포인트를 로드하려고 한다면? (rgb_stream에만 넣어야 함)
-    # -> 이 경우는 'Fine-tuning'이므로 별도 처리가 필요하지만, 
-    #    여기서는 'DualStream'으로 학습된 체크포인트를 로드한다고 가정.
-    
-    model.load_state_dict(state_dict, strict=False) # strict=False로 유연하게 로드
+    model = DeepfakeDetector(model_name=model_name)
+    model.load_state_dict(checkpoint['model_state_dict'])
     model.to(device)
     model.eval()
 

@@ -227,21 +227,36 @@ def main():
         pin_memory=True if device == 'cuda' else False
     )
 
-    # [Stage 1: SRM Warmup Strategy]
-    # 이미 학습된 RGB Stream은 고정(Freeze)하고,
-    # 새로 추가된 SRM Stream과 Classifier만 집중적으로 학습시킵니다.
-    print("🔒 Freezing RGB Stream for Stage 1 Training...")
-    for param in model.rgb_stream.parameters():
+    # [Stage 1: Partial Freeze Strategy]
+    # 단일 백본 모델이지만, 6채널 입력 적응을 위해 첫 레이어(conv_stem)와 마지막 분류기만 학습
+    # 나머지 몸통(Blocks)은 RGB 지식을 보존하기 위해 Freeze
+    print("🔒 Freezing Backbone Body for Stage 1 Adaptation...")
+    
+    # 1. 전체 백본 Freeze
+    for param in model.model.parameters():
         param.requires_grad = False
         
-    # 학습할 파라미터 그룹 설정
-    trainable_params = [
-        {'params': model.srm_stream.parameters(), 'lr': 1e-3}, # SRM은 처음부터 배우니까 좀 세게
-        {'params': model.classifier.parameters(), 'lr': 1e-3}  # 분류기도 새로 배우니까 세게
-    ]
+    # 2. 첫 번째 레이어 (conv_stem) Unfreeze -> 6채널 적응
+    for param in model.model.conv_stem.parameters():
+        param.requires_grad = True
+        
+    # 3. 분류기 (classifier) Unfreeze -> 정답 학습
+    # timm 모델마다 head 이름이 다를 수 있으므로 안전하게 처리
+    if hasattr(model.model, 'classifier'):
+        for param in model.model.classifier.parameters():
+            param.requires_grad = True
+    elif hasattr(model.model, 'fc'): # ResNet 계열 등
+        for param in model.model.fc.parameters():
+            param.requires_grad = True
+    elif hasattr(model.model, 'head'): # ViT 등
+        for param in model.model.head.parameters():
+            param.requires_grad = True
 
-    # 4. 옵티마이저
-    optimizer = optim.AdamW(trainable_params, weight_decay=0.01)
+    # 학습할 파라미터만 골라서 Optimizer에 전달
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    
+    # 4. 옵티마이저 (6채널 적응을 위해 전체 학습 -> 부분 학습으로 변경)
+    optimizer = optim.AdamW(trainable_params, lr=1e-3, weight_decay=0.01) # 초기 적응이라 LR 좀 높게
     
     # 스케줄러: 웜업(Warmup) 후 코사인 어닐링
     from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
