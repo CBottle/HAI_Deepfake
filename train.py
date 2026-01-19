@@ -63,26 +63,33 @@ def train_epoch(model, dataloader, criterion, optimizer, device, scaler=None):
     loss_meter = AverageMeter()
 
     pbar = tqdm(dataloader, desc='Training')
-    for batch in pbar:
+    for i, batch in enumerate(pbar):
         pixel_values = batch['pixel_values'].to(device)
         labels = batch['labels'].to(device)
 
         optimizer.zero_grad()
 
         # Mixed Precision Training
-        if scaler is not None:
-            with torch.cuda.amp.autocast():
-                logits = model(pixel_values)
-                loss = criterion(logits, labels)
+        if scaler is not None: # (현재 코드엔 scaler가 없지만 구조 유지)
+            pass
+        
+        logits = model(pixel_values)
+        loss = criterion(logits, labels)
+        
+        # [긴급 디버깅] 첫 번째 배치의 상태 확인
+        if i == 0:
+            print(f"\n[Debug] Logits Range: Min={logits.min().item():.4f}, Max={logits.max().item():.4f}")
+            print(f"[Debug] Labels Sample: {labels[:10].cpu().numpy()}")
+            
+            # 라벨 반전 테스트
+            loss_inverted = criterion(logits, 1 - labels)
+            print(f"[Debug] Original Loss: {loss.item():.4f} vs Inverted Label Loss: {loss_inverted.item():.4f}")
+            
+            if loss_inverted.item() < loss.item():
+                print("🚨 [WARNING] 라벨이 반대일 확률이 매우 높습니다! (Inverted Loss가 더 낮음)")
 
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            logits = model(pixel_values)
-            loss = criterion(logits, labels)
-            loss.backward()
-            optimizer.step()
+        loss.backward()
+        optimizer.step()
 
         loss_meter.update(loss.item(), pixel_values.size(0))
         pbar.set_postfix({'loss': f'{loss_meter.avg:.4f}'})
