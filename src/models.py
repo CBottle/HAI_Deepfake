@@ -106,10 +106,18 @@ class DeepfakeDetector(nn.Module):
             # [0:3] 채널: 기존 RGB 지식 그대로 (Scale 1.0)
             self.model.conv_stem.weight.data[:, 0:3, :, :].copy_(old_weight)
             
-            # [3:6] 채널: SRM 지식(초기화) * 0.01 (아주 작게 시작)
-            self.model.conv_stem.weight.data[:, 3:6, :, :].copy_(old_weight * 0.01)
+            # [3:6] 채널: SRM 지식(초기화) * 0.0 (완전 차단하여 초기 학습 안정화)
+            self.model.conv_stem.weight.data[:, 3:6, :, :].zero_()
             
             del temp_model # 메모리 절약
+
+        # 3. Classifier Head 초기화 (Logit 폭발 방지)
+        # timm 모델의 head는 보통 'classifier' 또는 'fc'
+        head = getattr(self.model, 'classifier', getattr(self.model, 'fc', getattr(self.model, 'head', None)))
+        if head is not None:
+            if isinstance(head, nn.Linear):
+                nn.init.normal_(head.weight, std=0.01) # 가중치를 작게
+                nn.init.constant_(head.bias, 0)        # 편향은 0으로
 
     def forward(self, x):
         # 1. SRM을 위한 정규화 해제 (SRM은 [0, 1] 또는 [0, 255] 데이터를 선호함)
